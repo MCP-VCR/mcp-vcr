@@ -1,0 +1,32 @@
+[project]
+name = "mcp-vcr"
+version = "0.1.0"
+description = "A deterministic, replayable, human-readable MCP transcript format and proxy."
+authors = [
+    { name = "mcp-vcr contributors" }
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.1",
+    "click>=8.1.0",
+]
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+mcp-vcr = "mcp_vcr.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[tool.setuptools]
+packages = ["mcp_vcr"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

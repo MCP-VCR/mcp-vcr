@@ -1,0 +1,36 @@
+meta:
+  version: 1
+  recorded_at: "2024-01-15T14:30:22.471Z"
+  session_id: "a3f2b1c9"
+  server_command: ["python", "my_server.py"]
+  protocol_version: "2024-11-05"
+  client_hint: "claude-desktop"
+  schema_version: "1.0"
+
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      id: 1
+      jsonrpc: "2.0"
+      method: initialize
+      params:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        clientInfo:
+          name: "claude-desktop"
+          version: "1.0.0"
+
+  - t: 47
+    dir: s2c
+    payload:
+      id: 1
+      jsonrpc: "2.0"
+      result:
+        protocolVersion: "2024-11-05"
+        capabilities:
+          tools:
+            listChanged: true
+        serverInfo:
+          name: "my-server"
+          version: "0.1.0"
