@@ -8,7 +8,7 @@ class Direction(str, Enum):
     S2C = "s2c"
 
 class Metadata(BaseModel):
-    version: int = Field(default=1, description="Transcript format version")
+    version: int = Field(ge=1, le=1, description="Transcript format version")
     recorded_at: datetime = Field(description="ISO 8601 UTC timestamp of recording start")
     session_id: str = Field(description="Unique 8-character hex session ID")
     server_command: List[str] = Field(description="Command used to launch the MCP server")

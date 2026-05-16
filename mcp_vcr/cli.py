@@ -21,7 +21,7 @@ def validate(path: Path):
         click.secho(f"ERROR: Validation failed for '{path}':", fg="red", err=True)
         # Simplify error output for CLI
         for error in e.errors():
-            loc = " -> ".join(str(l) for l in error['loc'])
+            loc = " -> ".join(str(part) for part in error['loc'])   
             msg = error['msg']
             click.echo(f"  {loc}: {msg}", err=True)
         sys.exit(1)
