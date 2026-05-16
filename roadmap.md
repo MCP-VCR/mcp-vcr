@@ -52,13 +52,13 @@ Tooling (CLI, plugins, test harnesses)
 **Goal:** Define and implement the versioned transcript specification.
 
 **Deliverables:**
-- [ ] Write formal transcript schema (JSON Schema or equivalent).
-- [ ] Add `version: 1` header to all transcripts.
-- [ ] Implement validator (CLI tool and library) that checks transcript validity.
+- [x] Write formal transcript schema (JSON Schema or equivalent).
+- [x] Add `version: 1` header to all transcripts.
+- [x] Implement validator (CLI tool and library) that checks transcript validity.
 - [ ] Document backward-compatibility strategy for future schema versions.
-- [ ] Update all existing transcript examples in docs/fixtures.
-- [ ] Add `schema_version` field to transcript metadata.
-- [ ] Create `.mcp-vcr.yaml` schema documentation.
+- [x] Update all existing transcript examples in docs/fixtures.
+- [x] Add `schema_version` field to transcript metadata.
+- [x] Create `.mcp-vcr.yaml` schema documentation.
 
 **Milestone Check:**
 - All test fixtures are valid against v1 schema.
