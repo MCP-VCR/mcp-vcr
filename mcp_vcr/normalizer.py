@@ -25,7 +25,9 @@ class TimestampNormalizer:
     def __init__(self):
         self.name = "timestamps"
         # Match ISO 8601 strings starting with \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}
-        self.timestamp_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+        self.timestamp_re = re.compile(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?"
+        )
 
     def apply(self, payload: Any) -> Any:
         copied = copy.deepcopy(payload)
@@ -41,7 +43,7 @@ class TimestampNormalizer:
                 node[i] = self._walk(node[i])
             return node
         elif isinstance(node, str):
-            if self.timestamp_re.match(node):
+            if self.timestamp_re.fullmatch(node):
                 return "NORM_TIMESTAMP"
             return node
         else:
@@ -162,6 +164,17 @@ class NormalizerChain:
             fresh_copy = copy.deepcopy(current)
             current = norm.apply(fresh_copy)
         return current
+    
+     def _enabled(key: str) -> bool:
+            raw = normalize_cfg.get(key, True)
+            if isinstance(raw, bool):
+                return raw
+            logger.warning(
+                "Invalid boolean for normalize.%s: %r (defaulting to enabled)",
+                key,
+                raw,
+            )
+            return True
 
     @classmethod
     def from_config(cls, config_path: Optional[Path] = None) -> "NormalizerChain":
@@ -194,13 +207,13 @@ class NormalizerChain:
 
         # Default all normalizers to True (enabled)
         normalizers: List[Normalizer] = []
-        if normalize_cfg.get("timestamps", True) is not False:
+        if _enabled("timestamps"):
             normalizers.append(TimestampNormalizer())
-        if normalize_cfg.get("request_ids", True) is not False:
+        if _enabled("request_ids"):
             normalizers.append(RequestIdNormalizer())
-        if normalize_cfg.get("uuids", True) is not False:
+        if _enabled("uuids"):
             normalizers.append(UuidNormalizer())
-        if normalize_cfg.get("cursors", True) is not False:
+        if _enabled("cursors"):
             normalizers.append(CursorNormalizer())
             
         return cls(normalizers)
