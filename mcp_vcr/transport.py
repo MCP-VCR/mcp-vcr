@@ -61,14 +61,14 @@ async def pump_c2s(
                 continue
                 
             # Attempt to validate as JSON
+            payload = None
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError as e:
                 logger.warning(f"Malformed JSON line from client (ignored): {e}. Line: {stripped!r}")
-                continue
                 
             # Call interceptor if provided
-            if interceptor:
+            if payload is not None and interceptor:
                 try:
                     interceptor.observe(payload, "c2s")
                 except Exception as ie:
@@ -105,14 +105,14 @@ async def pump_s2c(
                 continue
                 
             # Attempt to validate as JSON
+            payload = None
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError as e:
                 logger.warning(f"Malformed JSON line from server (ignored): {e}. Line: {stripped!r}")
-                continue
                 
             # Call interceptor if provided
-            if interceptor:
+            if payload is not None and interceptor:
                 try:
                     interceptor.observe(payload, "s2c")
                 except Exception as ie:
@@ -195,7 +195,7 @@ async def run_proxy(
             loop.add_signal_handler(sig, lambda s=sig: handle_sig(s))
         except NotImplementedError:
             # Fallback for platforms where add_signal_handler is not supported
-            signal.signal(sig, lambda s, f: loop.call_soon_threadsafe(shutdown_event.set))
+            signal.signal(sig, lambda s, f: loop.call_soon_threadsafe(handle_sig, s))
 
     # Wrappers for standard output/error
     client_writer = StreamWriterWrapper(sys.stdout.buffer)

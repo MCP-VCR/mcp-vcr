@@ -157,8 +157,8 @@ async def test_malformed_json_handling(caplog):
     with caplog.at_level(logging.WARNING):
         await pump_c2s(reader, writer, interceptor)
 
-    # Verify ONLY the valid line was forwarded
-    assert writer.write_buf == valid_line
+    # Verify both the malformed line and the valid line were forwarded
+    assert writer.write_buf == malformed_line + valid_line
     # Verify interceptor was called ONLY for the valid message
     interceptor.observe.assert_called_once_with(valid_msg, "c2s")
     # Verify warning log was raised
@@ -210,7 +210,15 @@ async def test_run_proxy_signal_forwarding():
             loop = asyncio.get_running_loop()
             with patch.object(loop, "add_signal_handler", side_effect=mock_add_signal_handler):
                 proxy_task = asyncio.create_task(run_proxy(["python", "server.py"]))
-                await asyncio.sleep(0.05)
+                # Deterministic wait for signal handlers to be registered
+                async def wait_for_handlers():
+                    while not (signal.SIGINT in handlers and signal.SIGTERM in handlers):
+                        await asyncio.sleep(0.01)
+                
+                try:
+                    await asyncio.wait_for(wait_for_handlers(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    raise AssertionError("Timeout waiting for signal handlers to be registered")
                 
                 # Verify SIGINT and SIGTERM handlers were added
                 assert signal.SIGINT in handlers
