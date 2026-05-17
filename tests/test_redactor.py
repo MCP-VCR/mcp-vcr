@@ -1,4 +1,3 @@
-import os
 import re
 import yaml
 import pytest
@@ -71,6 +70,8 @@ def test_pattern_redaction():
     redacted = redactor.redact(payload)
     
     assert redacted["openai"] == "<REDACTED>"
+    # field-name redaction takes precedence
+    assert redacted["bearer"] == "<REDACTED_bearer>"
     assert redacted["non_sensitive_key_with_bearer_value"] == "<REDACTED>"
     assert redacted["aws"] == "<REDACTED>"
     assert redacted["clean"] == "hello world"

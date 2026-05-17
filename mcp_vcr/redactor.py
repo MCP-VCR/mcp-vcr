@@ -1,10 +1,9 @@
-import os
 import re
 import copy
 import yaml
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Set, Optional
+from typing import Any, List, Set, Optional
 
 logger = logging.getLogger("mcp-vcr.redactor")
 
@@ -47,7 +46,7 @@ class Redactor:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
-        except Exception as e:
+        except (yaml.YAMLError, OSError) as e:
             logger.warning(f"Failed to load configuration file {config_path}: {e}")
             return
             
