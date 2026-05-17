@@ -208,8 +208,8 @@ async def run_proxy(
     shutdown_task = asyncio.create_task(shutdown_event.wait())
 
     # Wait until one of the pumps hits EOF or we receive a signal
-    done, pending = await asyncio.wait(
-        [c2s_task, s2c_task, stderr_task, shutdown_task],
+    _done, _pending = await asyncio.wait(
+        [c2s_task, s2c_task, shutdown_task],
         return_when=asyncio.FIRST_COMPLETED
     )
 

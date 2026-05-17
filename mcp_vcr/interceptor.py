@@ -9,9 +9,11 @@ class MessageInterceptor:
     MessageInterceptor observes JSON-RPC messages passing through the proxy.
     In Phase 1, it serves as a lightweight observer/hook.
     """
-    def __init__(self):
+    def __init__(self, server_command: Optional[List[str]] = None,    session_id: str = "session00"):
         self.start_time = time.monotonic()
         self.observed_messages = []
+        self.server_command = server_command or []
+        self.session_id = session_id
 
     def observe(self, payload: Dict[str, Any], direction: str) -> None:
         """
@@ -43,8 +45,8 @@ class MessageInterceptor:
             "meta": {
                 "version": 1,
                 "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "session_id": "session00",
-                "server_command": ["mcp-vcr"],
+                "session_id": self.session_id,
+                "server_command": self.server_command,
                 "schema_version": "1.0"
             },
             "messages": self.observed_messages

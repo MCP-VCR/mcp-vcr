@@ -53,14 +53,15 @@ def record(server_args):
         
     interceptor = MessageInterceptor()
     click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
-    
+
+    exit_code = 1
     try:
         exit_code = asyncio.run(run_proxy(args, interceptor=interceptor, recorder=interceptor))
-        interceptor.save("session.yaml")
-        sys.exit(exit_code)
     except Exception as e:
         click.secho(f"ERROR: Proxy failed: {e}", fg="red", err=True)
-        sys.exit(1)
+    finally:
+        interceptor.save("session.yaml")
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()

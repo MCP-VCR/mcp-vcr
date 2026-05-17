@@ -217,8 +217,8 @@ async def test_run_proxy_signal_forwarding():
                 
                 try:
                     await asyncio.wait_for(wait_for_handlers(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    raise AssertionError("Timeout waiting for signal handlers to be registered")
+                except asyncio.TimeoutError as err:
+                    raise AssertionError("Timeout waiting for signal handlers to be registered") from err
                 
                 # Verify SIGINT and SIGTERM handlers were added
                 assert signal.SIGINT in handlers
