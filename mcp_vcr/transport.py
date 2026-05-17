@@ -6,6 +6,7 @@ import signal
 import sys
 from typing import Any, List, Optional
 from .interceptor import MessageInterceptor
+from .schema import Direction
 
 logger = logging.getLogger("mcp-vcr.transport")
 
@@ -70,7 +71,7 @@ async def pump_c2s(
             # Call interceptor if provided
             if payload is not None and interceptor:
                 try:
-                    interceptor.observe(payload, "c2s")
+                    interceptor.observe(payload, Direction.C2S)
                 except Exception as ie:
                     logger.error(f"Error in c2s interceptor call: {ie}")
                     
@@ -114,7 +115,7 @@ async def pump_s2c(
             # Call interceptor if provided
             if payload is not None and interceptor:
                 try:
-                    interceptor.observe(payload, "s2c")
+                    interceptor.observe(payload, Direction.S2C)
                 except Exception as ie:
                     logger.error(f"Error in s2c interceptor call: {ie}")
                     
@@ -263,6 +264,16 @@ async def run_proxy(
                 await task
             except asyncio.CancelledError:
                 pass
+
+    # Flush interceptor and transcript recorder if provided
+    if interceptor and hasattr(interceptor, "flush"):
+        try:
+            if asyncio.iscoroutinefunction(interceptor.flush):
+                await interceptor.flush()
+            else:
+                interceptor.flush()
+        except Exception as e:
+            logger.error(f"Error flushing interceptor: {e}")
 
     # Flush transcript recorder if provided
     if recorder and hasattr(recorder, "flush"):

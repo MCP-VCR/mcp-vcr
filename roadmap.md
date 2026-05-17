@@ -55,7 +55,7 @@ Tooling (CLI, plugins, test harnesses)
 - [x] Write formal transcript schema (JSON Schema or equivalent).
 - [x] Add `version: 1` header to all transcripts.
 - [x] Implement validator (CLI tool and library) that checks transcript validity.
-- [ ] Document backward-compatibility strategy for future schema versions.
+- [x] Document backward-compatibility strategy for future schema versions.
 - [x] Update all existing transcript examples in docs/fixtures.
 - [x] Add `schema_version` field to transcript metadata.
 - [x] Create `.mcp-vcr.yaml` schema documentation.

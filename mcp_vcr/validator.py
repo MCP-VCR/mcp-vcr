@@ -1,19 +1,65 @@
+import importlib.resources
+import json
 import yaml
 from pathlib import Path
-from typing import Union, Dict, Any
+from typing import Any, Dict, List
+import jsonschema
 from pydantic import ValidationError
 from .schema import Transcript
 
-def load_yaml(file_path: Union[str, Path]) -> Dict[str, Any]:
-    """Loads a YAML file from disk."""
-    with open(file_path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
+_SCHEMA_CACHE = None
+def load_schema() -> Dict[str, Any]:
+    """Load the v1 JSON schema file."""
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is not None:     
+        return _SCHEMA_CACHE
+    schema_content = importlib.resources.files("mcp_vcr").joinpath("schemas", "transcript-schema-v1.json").read_text(encoding="utf-8")
+    _SCHEMA_CACHE = json.loads(schema_content)
+    return _SCHEMA_CACHE
 
-def validate_transcript(data: Dict[str, Any]) -> Transcript:
-    """Validates transcript data against the schema."""
+def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
+    """
+    Validate a transcript YAML file against the v1 schema.
+    Returns a list of dictionaries with 'loc' and 'msg'. If valid, returns empty list.
+    """
+    errors = []
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            transcript = yaml.safe_load(f)
+            
+        if transcript is None:
+            return [{"loc": ("transcript",), "msg": "Transcript is empty or invalid YAML"}]
+            
+        schema = load_schema()
+        validator = jsonschema.Draft7Validator(schema)
+        
+        for error in validator.iter_errors(transcript):
+            loc = tuple(str(p) for p in error.path) if error.path else ("root",)
+            errors.append({
+                "loc": loc,
+                "msg": error.message
+            })
+            
+    except yaml.YAMLError as e:
+        errors.append({"loc": ("yaml",), "msg": f"YAML Syntax Error: {e}"})
+    except FileNotFoundError:
+        errors.append({"loc": ("file",), "msg": f"File not found: {file_path}"})
+    except (OSError, UnicodeDecodeError) as e:
+        errors.append({"loc": ("file",), "msg": f"File error: {e}"})
+    return errors
+
+def validate_file(file_path: Path) -> Transcript:
+    """
+    Validate a file against the transcript schema. 
+    Raises pydantic.ValidationError if any issues are found.
+    On success, returns the parsed Pydantic Transcript model.
+    """
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        
+    if data is None:
+        raise ValueError("Transcript is empty or invalid YAML")
+        
+    # Model validate will raise standard pydantic.ValidationError on failure
+    # and return the parsed Transcript on success.
     return Transcript.model_validate(data)
-
-def validate_file(file_path: Union[str, Path]) -> Transcript:
-    """Loads and validates a transcript file."""
-    data = load_yaml(file_path)
-    return validate_transcript(data)

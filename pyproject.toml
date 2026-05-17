@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pyyaml>=6.0.1",
     "click>=8.1.0",
+    "jsonschema>=4.20.0",
 ]
 requires-python = ">=3.12"
 
@@ -28,6 +29,9 @@ asyncio_mode = "auto"
 
 [tool.setuptools]
 packages = ["mcp_vcr"]
+
+[tool.setuptools.package-data]
+mcp_vcr = ["schemas/transcript-schema-v1.json"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
