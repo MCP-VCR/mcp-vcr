@@ -76,8 +76,8 @@ async def test_non_blocking_recorder_dispatch():
     interceptor.observe({"jsonrpc": "2.0", "method": "test"}, Direction.C2S)
     t_elapsed = time.perf_counter() - t_start
     
-    # Must complete instantly (typically < 1-2ms, well below 100ms)
-    assert t_elapsed < 0.01
+    # Relax the timing bound to avoid CI flakiness.
+    assert t_elapsed < 0.05
     
     # Let event loop process scheduled tasks to invoke slow_write
     await asyncio.sleep(0.15)

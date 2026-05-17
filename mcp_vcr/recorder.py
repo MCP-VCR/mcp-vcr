@@ -39,6 +39,7 @@ class TranscriptRecorder:
         
         # Write initial YAML headers deterministically
         meta_dict = {
+            "version": 1,
             "recorded_at": self.recorded_at,
             "session_id": self.session_id,
             "server_command": self.server_command,
@@ -46,7 +47,6 @@ class TranscriptRecorder:
         }
         
         initial_doc = {
-            "version": 1,
             "meta": meta_dict
         }
         

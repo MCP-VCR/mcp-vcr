@@ -16,6 +16,7 @@ class MessageInterceptor:
         self.start_time = time.monotonic()  # t0 defined at instantiation
         self.observed_messages: List[Dict[str, Any]] = []
         self.recorder = recorder
+        self._recorder_tasks: List[asyncio.Task] = []
 
     def observe(self, payload: Dict[str, Any], direction: Direction) -> None:
         """
@@ -78,7 +79,8 @@ class MessageInterceptor:
             try:
                 # Schedule write in active event loop
                 loop = asyncio.get_running_loop()
-                loop.create_task(async_write())
+                task = loop.create_task(async_write())
+                self._recorder_tasks.append(task)
             except RuntimeError:
                 # Fallback for synchronous/test environments
                 try:
@@ -86,8 +88,18 @@ class MessageInterceptor:
                 except Exception as e:
                     logger.error(f"TranscriptRecorder synchronous write failed: {e}")
 
-    def flush(self) -> None:
+    async def flush(self) -> None:
         """
         Flush captured messages. Logs status for Phase 1/2 integration.
         """
         logger.info(f"Flushed {len(self.observed_messages)} messages.")
+        if self._recorder_tasks:
+            try:
+                await asyncio.gather(*self._recorder_tasks)
+            except RuntimeError:
+                # Handle RuntimeError for non-async contexts
+                pass
+            except Exception as e:
+                logger.error(f"Error during message interceptor task gathering: {e}")
+            finally:
+                self._recorder_tasks.clear()

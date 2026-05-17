@@ -4,9 +4,9 @@ from pathlib import Path
 from click.testing import CliRunner
 from mcp_vcr.cli import main
 
-def test_cli_validate_single_file_valid():
+def test_cli_validate_single_file_valid(tmp_path):
     """Verify cli validate exits 0 and prints OK for a valid transcript."""
-    test_file = Path("sessions/test_cli_valid.yaml")
+    test_file = tmp_path / "test_cli_valid.yaml"
     valid_data = """meta:
   version: 1
   recorded_at: "2026-05-17T12:00:00Z"
@@ -15,7 +15,6 @@ def test_cli_validate_single_file_valid():
   schema_version: "1.0"
 messages: []
 """
-    test_file.parent.mkdir(parents=True, exist_ok=True)
     with open(test_file, "w", encoding="utf-8") as f:
         f.write(valid_data)
         
@@ -25,9 +24,6 @@ messages: []
     assert result.exit_code == 0
     assert "OK" in result.output
     assert "valid" in result.output
-    
-    if test_file.exists():
-        test_file.unlink()
 
 
 def test_cli_validate_single_file_invalid():
@@ -100,3 +96,20 @@ messages: []
     assert "ERROR" in result.output
     
     shutil.rmtree(test_dir)
+
+
+def test_cli_validate_directory_yaml_error(tmp_path):
+    """Verify that a malformed YAML file in directory validation prints a clean error and sets exit code 1."""
+    test_dir = tmp_path / "yaml_error_sessions"
+    test_dir.mkdir()
+    
+    bad_file = test_dir / "bad_syntax.yaml"
+    with open(bad_file, "w", encoding="utf-8") as f:
+        f.write("meta:\n  version: 1\n  [invalid yaml syntax")
+        
+    runner = CliRunner()
+    result = runner.invoke(main, ["validate", str(test_dir)])
+    
+    assert result.exit_code == 1
+    assert "ERROR: YAML Error in" in result.output
+    assert "bad_syntax.yaml" in result.output

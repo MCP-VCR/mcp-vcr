@@ -265,6 +265,16 @@ async def run_proxy(
             except asyncio.CancelledError:
                 pass
 
+    # Flush interceptor and transcript recorder if provided
+    if interceptor and hasattr(interceptor, "flush"):
+        try:
+            if asyncio.iscoroutinefunction(interceptor.flush):
+                await interceptor.flush()
+            else:
+                interceptor.flush()
+        except Exception as e:
+            logger.error(f"Error flushing interceptor: {e}")
+
     # Flush transcript recorder if provided
     if recorder and hasattr(recorder, "flush"):
         try:

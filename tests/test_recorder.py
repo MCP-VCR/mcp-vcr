@@ -55,7 +55,7 @@ def test_streaming_incremental_writes():
     with open(test_file, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
         
-    assert data["version"] == 1
+    assert data["meta"]["version"] == 1
     assert len(data["messages"]) == 3
     assert data["messages"][0]["t"] == 10
     assert data["messages"][1]["payload"]["result"] == "r1"

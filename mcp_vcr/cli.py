@@ -36,6 +36,10 @@ def validate(path: Path):
                     loc = " -> ".join(str(part) for part in error['loc'])
                     msg = error['msg']
                     click.echo(f"  {loc}: {msg}", err=True)
+            except yaml.YAMLError as e:
+                all_ok = False
+                click.secho(f"ERROR: YAML Error in '{file}':", fg="red", err=True)
+                click.echo(f"  {e}", err=True)
             except Exception as e:
                 all_ok = False
                 click.secho(f"ERROR: '{file.name}' unexpected validation error: {e}", fg="red", err=True)

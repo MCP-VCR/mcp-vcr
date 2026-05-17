@@ -8,8 +8,8 @@ This guide details the backward-compatibility strategy and migration steps for u
 
 | Feature | Legacy / v0 format | v1 format |
 | :--- | :--- | :--- |
-| **Versioning** | Absent or raw `schema: null` | `version: 1` at top-level |
-| **Metadata** | `session_id` and `recorded_at` missing or inconsistent | Uniform `meta` section with `recorded_at`, `session_id`, `server_command`, `schema_version` |
+| **Versioning** | Absent or raw `schema: null` | `meta.version: 1` inside `meta` block |
+| **Metadata** | `session_id` and `recorded_at` missing or inconsistent | Uniform `meta` section with `recorded_at`, `session_id`, `server_command`, `schema_version`, and `version` |
 | **Lazy Meta** | N/A | Captures `protocol_version` and `client_hint` |
 | **Direction** | `direction` field (variable case) | `dir` field (strict `c2s` or `s2c` enum) |
 | **Timestamps** | Seconds or omitted | Milliseconds (`t` field, monotonic integer) |
@@ -20,14 +20,14 @@ This guide details the backward-compatibility strategy and migration steps for u
 
 To migrate an existing v0 transcript to v1, follow these rules:
 
-1. **Add top-level `version`**:
-   Insert `version: 1` as the very first line.
+1. **Add `meta.version`**:
+   Set `version: 1` inside the `meta` block, and remove any top-level `version` properties, as the v1 schema disallows extra top-level fields.
 
 2. **Normalize meta section**:
-   Wrap metadata keys inside a `meta` block:
+   Wrap metadata keys inside a `meta` block containing `version`, `recorded_at`, `session_id`, `server_command`, and `schema_version`:
    ```yaml
-   version: 1
    meta:
+     version: 1
      recorded_at: "2026-05-17T12:00:00Z"
      session_id: "00000000" # Use a random 8-char hex if missing
      server_command: ["python", "server.py"]

@@ -1,3 +1,4 @@
+import importlib.resources
 import json
 import yaml
 from pathlib import Path
@@ -8,9 +9,8 @@ from .schema import Transcript
 
 def load_schema() -> Dict[str, Any]:
     """Load the v1 JSON schema file."""
-    schema_path = Path(__file__).parent.parent / "docs" / "transcript-schema-v1.json"
-    with open(schema_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    schema_content = importlib.resources.files("mcp_vcr").joinpath("schemas", "transcript-schema-v1.json").read_text(encoding="utf-8")
+    return json.loads(schema_content)
 
 def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
     """
