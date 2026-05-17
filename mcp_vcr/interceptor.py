@@ -4,6 +4,7 @@ import time
 from typing import Any, Dict, List, Optional
 from .schema import Direction
 from .recorder import TranscriptRecorder
+from .redactor import Redactor
 
 logger = logging.getLogger("mcp-vcr.interceptor")
 
@@ -12,10 +13,11 @@ class MessageInterceptor:
     MessageInterceptor observes, tags, classifies, and forwards JSON-RPC messages 
     passing through the proxy asynchronously to the TranscriptRecorder.
     """
-    def __init__(self, recorder: Optional[TranscriptRecorder] = None):
+    def __init__(self, recorder: Optional[TranscriptRecorder] = None, redactor: Optional[Redactor] = None):
         self.start_time = time.monotonic()  # t0 defined at instantiation
         self.observed_messages: List[Dict[str, Any]] = []
         self.recorder = recorder
+        self.redactor = redactor or Redactor()
         self._recorder_tasks: List[asyncio.Task] = []
 
     def observe(self, payload: Dict[str, Any], direction: Direction) -> None:
@@ -70,9 +72,16 @@ class MessageInterceptor:
 
         # 4. Non-blocking Async Recorder Dispatch
         if self.recorder:
+            redacted_payload = self.redactor.redact(payload)
+            redacted_msg = {
+                "t": t,
+                "dir": dir_val,
+                "payload": redacted_payload
+            }
+            
             async def async_write():
                 try:
-                    self.recorder.write(msg)
+                    self.recorder.write(redacted_msg)
                 except Exception as e:
                     logger.error(f"TranscriptRecorder write task failed: {e}")
 
@@ -84,7 +93,7 @@ class MessageInterceptor:
             except RuntimeError:
                 # Fallback for synchronous/test environments
                 try:
-                    self.recorder.write(msg)
+                    self.recorder.write(redacted_msg)
                 except Exception as e:
                     logger.error(f"TranscriptRecorder synchronous write failed: {e}")
 
