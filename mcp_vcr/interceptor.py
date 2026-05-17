@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("mcp-vcr.interceptor")
 
@@ -29,7 +29,11 @@ class MessageInterceptor:
 
     def flush(self) -> None:
         """
-        Flush captured messages.
+        Log statistics for the captured messages.
+        
+        In this lightweight implementation, observed messages are kept in memory 
+        until save() is explicitly called. This method provides a status log 
+        without clearing the in-memory buffer.
         """
         logger.info(f"Flushed {len(self.observed_messages)} messages.")
 

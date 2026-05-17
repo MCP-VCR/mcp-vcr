@@ -51,7 +51,7 @@ def record(server_args):
         click.secho("ERROR: No server command specified.", fg="red", err=True)
         sys.exit(1)
         
-    interceptor = MessageInterceptor()
+    interceptor = MessageInterceptor(server_command=args)
     click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
 
     exit_code = 1
