@@ -40,6 +40,7 @@ class TranscriptRecorder:
         
         # Write initial YAML headers deterministically
         meta_dict = {
+            "version": 1,
             "recorded_at": self.recorded_at,
             "session_id": self.session_id,
             "server_command": self.server_command,
@@ -47,7 +48,6 @@ class TranscriptRecorder:
         }
         
         initial_doc = {
-            "version": 1,
             "meta": meta_dict
         }
         
@@ -113,7 +113,8 @@ class TranscriptRecorder:
                 data["meta"]["client_hint"] = self.client_hint
                 
             # Rewrite fully populated, deterministic transcript with stable key ordering
-            with open(self.filepath, "w", encoding="utf-8") as f:
+            fd = os.open(self.filepath, os.O_WRONLY | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, sort_keys=True, default_flow_style=False)
                 
         except Exception as e:
