@@ -24,7 +24,7 @@ class TranscriptRecorder:
         if filename:
             self.filepath = Path(filename)
         else:
-            now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             self.filepath = Path(f"sessions/session_{now_str}_{self.session_id}.yaml")
             
         # Automatically create the parent directories
