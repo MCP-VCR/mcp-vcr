@@ -107,10 +107,19 @@ class TranscriptRecorder:
                 return
                 
             # Populate lazy fields if captured and not already present
+            changed = False
             if self.protocol_version:
-                data["meta"]["protocol_version"] = self.protocol_version
+                if "protocol_version" not in data["meta"]:
+                    data["meta"]["protocol_version"] = self.protocol_version
+                    changed = True
             if self.client_hint:
-                data["meta"]["client_hint"] = self.client_hint
+                if "client_hint" not in data["meta"]:
+                    data["meta"]["client_hint"] = self.client_hint
+                    changed = True
+
+            # Don't rewrite if no lazy fields were set
+            if not changed:
+                return
                 
             # Rewrite fully populated, deterministic transcript with stable key ordering
             fd = os.open(self.filepath, os.O_WRONLY | os.O_TRUNC, 0o600)
