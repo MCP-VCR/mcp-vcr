@@ -11,9 +11,11 @@ mcp-vcr replay sessions/init_001.yaml -- python my_server.py
 
 ## What is this?
 
-`mcp-vcr` is a transparent stdio proxy and replay framework for [MCP](https://modelcontextprotocol.io) servers.
+`mcp-vcr` is a transparent stdio proxy and replay framework for [MCP](https://modelcontextprotocol.org) servers.
 
-It sits between an MCP client (Claude Desktop, Cursor, Windsurf, Inspector) and your server, records every JSON-RPC message in both directions, and stores them as human-readable YAML transcripts. Those transcripts become:
+It sits between an MCP client (Claude Desktop, Cursor, Windsurf, Inspector) and your server, records every JSON-RPC message in both directions, and stores them as human-readable YAML transcripts.
+
+**Use cases:**
 
 - **Regression tests** — replay them against a new version of your server and diff the responses
 - **Bug reproduction cases** — capture the exact sequence that triggered a failure and share it
@@ -298,9 +300,58 @@ ignore_fields:          # always skip in diffs
 
 ---
 
+## Release Timeline & Status
+
+**Current Status: Phase 3 Complete ✓ (Transcript Schema v1)**
+
+You've successfully completed the core recording, replay, and transcript infrastructure. The foundation is solid.
+
+### Phase Breakdown & Release Dates
+
+| Phase | Status | Timeline | Deliverables |
+|---|---|---|---|
+| **1. Transport & Proxy Core** | ✓ | Weeks 1–2 | asyncio subprocess launcher, bidirectional pipes, stderr forwarding, large message buffering, graceful error handling |
+| **2. Message Interceptor & Timestamps** | ✓ | Weeks 2–3 | Monotonic timestamps, direction tagging (c2s/s2c), JSON-RPC message classification, non-blocking recorder |
+| **3. Transcript Schema v1** | ✓ | Weeks 3–4 | YAML schema, streaming writes, stable key ordering, lazy metadata backfill, session ID generation, JSON Schema validator, `mcp-vcr validate` |
+| **4. Redaction Layer** | 🔄 In Progress | Week 4 | Field-name redaction, regex patterns, path redaction, config-driven rules |
+| **5. Normalization Layer** | 📋 Planned | Weeks 5–6 | Timestamp canonicalization, UUID masking, request ID replacement, cursor token normalization |
+| **6. Replay Engine** | 📋 Planned | Weeks 6–7 | Deterministic replay loop, notification handling, per-request timeouts, incomplete replay markers |
+| **7. Diff Engine** | 📋 Planned | Weeks 7–8 | Response pairing, structural/semantic/strict modes, text/JSON/GitHub annotations formats |
+| **8. Golden Snapshot Testing** | 📋 Planned | Weeks 8–9 | `mcp-vcr snapshot`, storage conventions, `mcp-vcr verify`, snapshot updates, GitHub Actions examples |
+| **9. CLI Polish** | 📋 Planned | Weeks 10–11 | Full flag coverage, help text, error messages, `mcp-vcr list` and `mcp-vcr inspect` |
+| **10. Tests & Documentation** | 📋 Planned | Weeks 11–12 | Sample fixtures, unit tests (80%+ coverage), Getting Started, CI guide, ARCHITECTURE updates |
+
+### Release Milestones
+
+| Release | ETA | What's Included | Best For |
+|---|---|---|---|
+| **v0.1.0** | **Late May 2026** | Phases 1–3: Core recording/replay, YAML transcripts, manual secret redaction | Recording sessions locally; early adopters testing multiple clients |
+| **v0.2.0** | **Late June 2026** | Phases 4–8: Automatic redaction, normalization, full replay/diff, golden snapshots, GitHub Actions integration | **Production teams**: CI/CD pipelines, regression testing in CI, snapshot-driven workflows |
+| **v0.3.0** | **Late July 2026** | Phases 9–10: Polished CLI, comprehensive tests (80%+ coverage), full documentation, inspection tools | Full-scale team adoption; mature, documented testing framework |
+
+### When Will It Be Useful?
+
+| Timeframe | Capability | Recommended For |
+|---|---|---|
+| **Now** | Manual recording & replay | Solo developers testing locally |
+| **v0.1.0 (late May)** | Working tool; basic regression detection | Early adopters; manual CI integration |
+| **v0.2.0 (late June)** | **Production-ready** | Teams shipping to CI; security-conscious projects (auto-redaction); multi-client testing |
+| **v0.3.0 (late July)** | Mature & polished | Organization-wide adoption; large teams |
+
+### Success Criteria for v0.2.0 (Production Release)
+
+- [x] Versioned transcript schema v1 is locked
+- [ ] Normalization is built-in and documented
+- [ ] Golden snapshot testing works end-to-end in CI
+- [ ] Core modules have >80% test coverage
+- [ ] Getting Started guide complete
+- [ ] v0.2 released and used by ≥1 external project
+
+---
+
 ## Roadmap
 
-### v0.1 — MVP
+### v0.1 — MVP (May 2026)
 - [x] stdio interception and subprocess management
 - [x] bidirectional transcript recording
 - [x] YAML transcript format
@@ -308,19 +359,19 @@ ignore_fields:          # always skip in diffs
 - [x] structural JSON diff
 - [x] automatic secret redaction
 
-### v0.2 — CI integration
+### v0.2 — CI integration (June 2026)
 - [ ] `check` command with exit codes
 - [ ] GitHub Actions output format
 - [ ] transcript normalization (stable ordering for diffing)
 - [ ] golden snapshot workflow (`mcp-vcr snapshot update`)
 
-### v0.3 — Tooling
+### v0.3 — Tooling (July 2026)
 - [ ] MCP Inspector integration
 - [ ] `inspect` TUI for timeline visualization
 - [ ] timing-faithful replay mode
 - [ ] fuzz mode (inject malformed messages, observe server behavior)
 
-### v0.4 — Compatibility matrix
+### v0.4 — Compatibility matrix (Q3+ 2026)
 - [ ] multi-client recording (same server, different clients)
 - [ ] automated compatibility report across client/server pairs
 - [ ] public matrix publishing (opt-in)
@@ -356,7 +407,7 @@ ignore_fields:          # always skip in diffs
 ## Contributing
 
 ```bash
-git clone https://github.com/yournamme/mcp-vcr
+git clone https://github.com/MCP-VCR/mcp-vcr
 cd mcp-vcr
 pip install -e ".[dev]"
 pytest
