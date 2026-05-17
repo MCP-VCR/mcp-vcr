@@ -51,8 +51,9 @@ def record(server_args):
         click.secho("ERROR: No server command specified.", fg="red", err=True)
         sys.exit(1)
         
-    interceptor = MessageInterceptor(server_command=args)
-    click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
+    command_name = args[0]
+    interceptor = MessageInterceptor(server_command=[command_name])
+    click.secho(f"Starting proxy for server: {command_name}", fg="cyan", err=True)
 
     exit_code = 1
     try:
@@ -60,7 +61,11 @@ def record(server_args):
     except Exception as e:
         click.secho(f"ERROR: Proxy failed: {e}", fg="red", err=True)
     finally:
-        interceptor.save("session.yaml")
+        try:
+            interceptor.save("session.yaml")
+        except (OSError, yaml.YAMLError) as e:
+            click.secho(f"ERROR: Failed to save session.yaml: {e}", fg="red", err=True)
+            exit_code = 1
     sys.exit(exit_code)
 
 if __name__ == "__main__":
