@@ -133,9 +133,8 @@ class CursorNormalizer:
     def _walk(self, node: Any) -> Any:
         if isinstance(node, dict):
             for key in list(node.keys()):
-                if isinstance(key, str) and key in self.target_fields:
-                    if isinstance(node[key], str):
-                        node[key] = "NORM_CURSOR"
+                if isinstance(key, str) and key in self.target_fields and isinstance(node[key], str):
+                    node[key] = "NORM_CURSOR"
                 else:
                     node[key] = self._walk(node[key])
             return node
@@ -178,10 +177,11 @@ class NormalizerChain:
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
                     config = yaml.safe_load(f)
-                    if isinstance(config, dict):
-                        normalize_cfg = config.get("normalize", {})
-            except Exception as e:
-                logger.warning(f"Failed to load configuration file {config_path}: {e}")
+            except (OSError, yaml.YAMLError) as e:
+                logger.warning("Failed to load configuration file %s: %s", config_path, e)
+                config = None
+            if isinstance(config, dict):
+                normalize_cfg = config.get("normalize", {})
                 
         # Validate keys in the configuration
         valid_keys = {"timestamps", "request_ids", "uuids", "cursors"}

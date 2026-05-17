@@ -152,6 +152,7 @@ def test_cursor_normalizer():
         "nextCursor": "opaque_cursor_value_2",
         "pageToken": "token_123",
         "continuationToken": "token_456",
+        "cursor_object": {"cursor": {"nextCursor": "opaque_nested_cursor"}},
         "other_field": "do_not_normalize_me",
         "integer_cursor": 42  # non-string cursor value, should stay unchanged
     }
@@ -162,6 +163,7 @@ def test_cursor_normalizer():
     assert redacted["nextCursor"] == "NORM_CURSOR"
     assert redacted["pageToken"] == "NORM_CURSOR"
     assert redacted["continuationToken"] == "NORM_CURSOR"
+    assert redacted["cursor_object"]["cursor"]["nextCursor"] == "NORM_CURSOR"
     assert redacted["other_field"] == "do_not_normalize_me"
     assert redacted["integer_cursor"] == 42
 
