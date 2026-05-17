@@ -1,9 +1,12 @@
+import asyncio
 import click
 import sys
 import yaml
 from pathlib import Path
 from pydantic import ValidationError
 from .validator import validate_file
+from .transport import run_proxy
+from .interceptor import MessageInterceptor
 
 @click.group()
 def main():
@@ -19,7 +22,6 @@ def validate(path: Path):
         click.secho(f"OK: Transcript '{path}' is valid.", fg="green")
     except ValidationError as e:
         click.secho(f"ERROR: Validation failed for '{path}':", fg="red", err=True)
-        # Simplify error output for CLI
         for error in e.errors():
             loc = " -> ".join(str(part) for part in error['loc'])   
             msg = error['msg']
@@ -32,6 +34,31 @@ def validate(path: Path):
     except Exception as e:
         click.secho(f"ERROR: Unexpected error validating '{path}':", fg="red", err=True)
         click.echo(f"  {e}", err=True)
+        sys.exit(1)
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
+def record(server_args):
+    """Record an MCP session by proxying traffic to a server subprocess."""
+    args = list(server_args)
+    if args and args[0] == '--':
+        args = args[1:]
+        
+    if not args:
+        click.secho("ERROR: No server command specified.", fg="red", err=True)
+        sys.exit(1)
+        
+    interceptor = MessageInterceptor()
+    click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
+    
+    try:
+        exit_code = asyncio.run(run_proxy(args, interceptor=interceptor))
+        sys.exit(exit_code)
+    except Exception as e:
+        click.secho(f"ERROR: Proxy failed: {e}", fg="red", err=True)
         sys.exit(1)
 
 if __name__ == "__main__":
