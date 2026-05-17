@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import pytest
 from mcp_vcr.validator import validate_transcript, validate_file, ValidationError

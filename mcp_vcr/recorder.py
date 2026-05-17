@@ -35,11 +35,11 @@ class TranscriptRecorder:
         """
         Open the transcript file and write the initial meta header and messages key.
         """
-        self.file_handle = open(self.filepath, "w", encoding="utf-8")
+        fd = os.open(self.filepath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        self.file_handle = os.fdopen(fd, "w", encoding="utf-8")
         
         # Write initial YAML headers deterministically
         meta_dict = {
-            "version": 1,
             "recorded_at": self.recorded_at,
             "session_id": self.session_id,
             "server_command": self.server_command,
@@ -47,6 +47,7 @@ class TranscriptRecorder:
         }
         
         initial_doc = {
+            "version": 1,
             "meta": meta_dict
         }
         

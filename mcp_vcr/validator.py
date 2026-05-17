@@ -7,10 +7,15 @@ import jsonschema
 from pydantic import ValidationError
 from .schema import Transcript
 
+_SCHEMA_CACHE = None
 def load_schema() -> Dict[str, Any]:
     """Load the v1 JSON schema file."""
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is not None:     
+        return _SCHEMA_CACHE
     schema_content = importlib.resources.files("mcp_vcr").joinpath("schemas", "transcript-schema-v1.json").read_text(encoding="utf-8")
-    return json.loads(schema_content)
+    _SCHEMA_CACHE = json.loads(schema_content)
+    return _SCHEMA_CACHE
 
 def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
     """
@@ -39,9 +44,8 @@ def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
         errors.append({"loc": ("yaml",), "msg": f"YAML Syntax Error: {e}"})
     except FileNotFoundError:
         errors.append({"loc": ("file",), "msg": f"File not found: {file_path}"})
-    except Exception as e:
-        errors.append({"loc": ("unexpected",), "msg": f"Unexpected error: {e}"})
-        
+    except (OSError, UnicodeDecodeError) as e:
+        errors.append({"loc": ("file",), "msg": f"File error: {e}"})
     return errors
 
 def validate_file(file_path: Path) -> Transcript:

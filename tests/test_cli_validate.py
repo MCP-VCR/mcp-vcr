@@ -26,9 +26,9 @@ messages: []
     assert "valid" in result.output
 
 
-def test_cli_validate_single_file_invalid():
+def test_cli_validate_single_file_invalid(tmp_path):
     """Verify cli validate exits 1 and lists errors for an invalid transcript."""
-    test_file = Path("sessions/test_cli_invalid.yaml")
+    test_file = tmp_path / "sessions" / "test_cli_invalid.yaml"
     invalid_data = """meta:
   recorded_at: "2026-05-17T12:00:00Z"
   session_id: "abcdef12"
@@ -47,16 +47,12 @@ messages: []
     assert "ERROR" in result.output
     assert "version" in result.output
     
-    if test_file.exists():
-        test_file.unlink()
+    # tmp_path handles cleanup
 
 
-def test_cli_validate_directory():
+def test_cli_validate_directory(tmp_path):
     """Verify cli validate scans directories, listing status for each file separately."""
-    test_dir = Path("test_cli_sessions")
-    if test_dir.exists():
-        shutil.rmtree(test_dir)
-        
+    test_dir = tmp_path / "test_cli_sessions"
     test_dir.mkdir(parents=True, exist_ok=True)
     
     # 1. Valid file
@@ -95,7 +91,7 @@ messages: []
     assert "invalid_session.yaml" in result.output
     assert "ERROR" in result.output
     
-    shutil.rmtree(test_dir)
+    # tmp_path handles cleanup
 
 
 def test_cli_validate_directory_yaml_error(tmp_path):
