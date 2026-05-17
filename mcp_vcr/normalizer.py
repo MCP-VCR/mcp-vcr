@@ -164,17 +164,6 @@ class NormalizerChain:
             fresh_copy = copy.deepcopy(current)
             current = norm.apply(fresh_copy)
         return current
-    
-     def _enabled(key: str) -> bool:
-            raw = normalize_cfg.get(key, True)
-            if isinstance(raw, bool):
-                return raw
-            logger.warning(
-                "Invalid boolean for normalize.%s: %r (defaulting to enabled)",
-                key,
-                raw,
-            )
-            return True
 
     @classmethod
     def from_config(cls, config_path: Optional[Path] = None) -> "NormalizerChain":
@@ -204,6 +193,17 @@ class NormalizerChain:
                     logger.warning(f"Unknown key in normalize configuration: {key}")
         else:
             normalize_cfg = {}
+
+        def _enabled(key: str) -> bool:
+            raw = normalize_cfg.get(key, True)
+            if isinstance(raw, bool):
+                return raw
+            logger.warning(
+                "Invalid boolean for normalize.%s: %r (defaulting to enabled)",
+                key,
+                raw,
+            )
+            return True
 
         # Default all normalizers to True (enabled)
         normalizers: List[Normalizer] = []
