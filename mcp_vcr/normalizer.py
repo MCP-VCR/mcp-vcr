@@ -159,10 +159,9 @@ class NormalizerChain:
         Sequentially apply normalizers. Each normalizer receives a fresh deep copy
         to ensure no mutation side-effects.
         """
-        current = copy.deepcopy(payload)
+        current = payload
         for norm in self.normalizers:
-            fresh_copy = copy.deepcopy(current)
-            current = norm.apply(fresh_copy)
+            current = norm.apply(current)
         return current
 
     @classmethod
