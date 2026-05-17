@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mcp_vcr.interceptor import MessageInterceptor
+from mcp_vcr.schema import Direction
 from mcp_vcr.transport import (
     get_stdin_reader,
     launch_server,
@@ -75,8 +76,8 @@ async def test_pump_c2s():
 
     # Verify message was forwarded with a newline
     assert writer.write_buf == json.dumps(msg).encode() + b"\n"
-    # Verify interceptor was called with direction='c2s'
-    interceptor.observe.assert_called_once_with(msg, "c2s")
+    # Verify interceptor was called with Direction.C2S
+    interceptor.observe.assert_called_once_with(msg, Direction.C2S)
 
 
 @pytest.mark.asyncio
@@ -95,8 +96,8 @@ async def test_pump_s2c():
 
     # Verify message was forwarded with a newline
     assert writer.write_buf == json.dumps(msg).encode() + b"\n"
-    # Verify interceptor was called with direction='s2c'
-    interceptor.observe.assert_called_once_with(msg, "s2c")
+    # Verify interceptor was called with Direction.S2C
+    interceptor.observe.assert_called_once_with(msg, Direction.S2C)
 
 
 @pytest.mark.asyncio
@@ -136,7 +137,7 @@ async def test_large_message():
     await pump_s2c(reader, writer, interceptor)
     
     assert len(writer.write_buf) == len(line_bytes)
-    interceptor.observe.assert_called_once_with(msg, "s2c")
+    interceptor.observe.assert_called_once_with(msg, Direction.S2C)
 
 
 @pytest.mark.asyncio
@@ -160,7 +161,7 @@ async def test_malformed_json_handling(caplog):
     # Verify both the malformed line and the valid line were forwarded
     assert writer.write_buf == malformed_line + valid_line
     # Verify interceptor was called ONLY for the valid message
-    interceptor.observe.assert_called_once_with(valid_msg, "c2s")
+    interceptor.observe.assert_called_once_with(valid_msg, Direction.C2S)
     # Verify warning log was raised
     assert any("Malformed JSON line" in record.message for record in caplog.records)
 

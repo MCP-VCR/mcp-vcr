@@ -6,6 +6,7 @@ import signal
 import sys
 from typing import Any, List, Optional
 from .interceptor import MessageInterceptor
+from .schema import Direction
 
 logger = logging.getLogger("mcp-vcr.transport")
 
@@ -70,7 +71,7 @@ async def pump_c2s(
             # Call interceptor if provided
             if payload is not None and interceptor:
                 try:
-                    interceptor.observe(payload, "c2s")
+                    interceptor.observe(payload, Direction.C2S)
                 except Exception as ie:
                     logger.error(f"Error in c2s interceptor call: {ie}")
                     
@@ -114,7 +115,7 @@ async def pump_s2c(
             # Call interceptor if provided
             if payload is not None and interceptor:
                 try:
-                    interceptor.observe(payload, "s2c")
+                    interceptor.observe(payload, Direction.S2C)
                 except Exception as ie:
                     logger.error(f"Error in s2c interceptor call: {ie}")
                     
