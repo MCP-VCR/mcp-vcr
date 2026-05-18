@@ -1,294 +1,100 @@
-# mcp-vcr: 3-Month Development Roadmap
+# MCP-VCR Development Roadmap
 
 **Last Updated:** May 2026  
-**Planning Period:** May 16, 2026 – August 16, 2026
+**Status:** Core v0.2 Stable & Shipped  
 
 ---
 
-## Core Invariant
+## The Core Invariant
 
+All architectural decisions, integrations, and extensions are governed by a single core anchor:  
 **A deterministic, replayable, human-readable MCP transcript format.**
 
-This is our architectural center and long-term stability anchor. Everything else is secondary.
-
-- Architectural decisions must preserve this invariant.
-- Integrations (Inspector, tooling, third-party) are built *on top* of, not inside, this core.
-- Format evolution is versioned and backward-compatible.
+*   **Human-Readable**: Stored as clean, git-diffable YAML transcripts.
+*   **Deterministic**: Normalizes dynamic variables (timestamps, IDs, UUIDs, cursors) so that subsequent test runs are byte-identical.
+*   **Transparent**: Proxy intercepts traffic without mutating stream messages in-flight.
+*   **Version-Aware**: Supports robust transcript versioning (`version: 1`) and backward compatibility gates (`version: 0`).
 
 ---
 
-## Architecture Layers
+## Accomplished Milestones (v0.1 & v0.2)
+
+We have successfully locked down and shipped the core foundation of MCP-VCR:
+
+*   [x] **Phase 1–3: Bidirectional stdio Proxy & Schema v1**
+    *   High-performance, non-blocking asynchronous pipes.
+    *   Classified and validated JSON-RPC v1 YAML schema with lazy metadata backfilling.
+*   [x] **Phase 4–5: In-Flight Redaction & Normalization Chain**
+    *   Recursive redaction of keys, regex credential patterns, and absolute filesystem paths.
+    *   Five sequential normalizers (Timestamps, UUIDs, Page Cursors, Local Paths, JSON-RPC sequential IDs) yielding clean, reproducible snapshots.
+*   [x] **Phase 6–8: Replay, Diff Engine & Golden Snapshots**
+    *   JSON-RPC ID-paired replay and structural/semantic/strict comparison diffing.
+    *   Automatic golden snapshot creation (`snapshot`) and verification checking (`verify`).
+*   [x] **Phase 9–10: CLI Polish, Compatibility Suite & Technical Documentation**
+    *   Fully tested CLI flag coverage with backward compatibility gates supporting legacy version 0 transcripts on-the-fly.
+    *   Expanded test suite (85 tests passing successfully) and complete developer onboarding and CI guides.
+
+---
+
+## Post-v0.2 Long-Term Roadmap (What Lies Ahead)
+
+With the core testing infrastructure stable and validated, the roadmap tracks high-value areas intentionally deferred to keep the initial design lightweight.
 
 ```
-Transport (stdio/pipes)
-    ↓
-Transcript (YAML, versioned schema)
-    ↓
-Normalization (dedupe + mask nondeterminism)
-    ↓
-Replay (deterministic, version-aware engine)
-    ↓
-Diff (layered: strict/semantic, supports snapshot testing)
-    ↓
-Tooling (CLI, plugins, test harnesses)
+                   MCP-VCR Stable Core (v0.2)
+                               │
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+Timing-Faithful           Fuzz Testing            HTTP/SSE
+    Replay                   Mode                Transports
+ (t-delay sleep)       (Mutation payload)       (sse-proxy)
+       │                       │                       │
+       └───────────────────────┼───────────────────────┘
+                               ▼
+                        Platform Gates
+                    (Inspector Integration
+                     & Compatibility Matrix)
 ```
 
----
+### 1. Timing-Faithful Replay
+*   **Objective**: Replay client messages respecting the timing patterns of the original recorded session.
+*   **Mechanism**: Use the `t` field (relative milliseconds since session start) inside the transcript to insert non-blocking `asyncio.sleep` delays during replay.
+*   **Why it matters**: Crucial for testing rate-limiting systems, connection handling, or servers with timeout-sensitive state machines.
 
-## High-Level Goals (3 Months)
+### 2. Fuzz Testing Mode (`mcp-vcr fuzz`)
+*   **Objective**: Proactively verify MCP server resilience under adverse conditions.
+*   **Mechanism**: Read a golden snapshot and stream client-to-server (`c2s`) messages with controlled structural mutations:
+    *   *Field Removal*: Omit required JSON schema parameters.
+    *   *Type Confusion*: Swap integers for strings, list types for dictionaries.
+    *   *Boundary Violations*: Inject extremely large numbers, empty structures, or massive strings.
+*   **Why it matters**: Ensures the server gracefully rejects bad input with valid JSON-RPC error codes instead of crashing, locking standard pipes, or exposing sensitive execution tracebacks.
 
-1. **Stabilize the core invariant** — versioned, deterministic transcript format with complete validator.
-2. **Add normalization as first-class architecture** — not just "ignore fields", but proper transforms for nondeterministic data.
-3. **Golden snapshot testing** — `mcp-vcr snapshot` and `mcp-vcr verify` as pytest-grade regression testing for MCP.
-4. **Robust replay/diff** — ensure version-aware, deterministic replay and diff that never breaks on older transcripts.
-5. **Documentation & fixtures** — make adoption frictionless with onboarding guides and sample transcripts.
+### 3. Official MCP Inspector Integration
+*   **Objective**: Bridge the gap between CLI regression suites and interactive visual debugging.
+*   **Mechanism**: Partner with the official Model Context Protocol maintainers to support loading, inspecting, and editing `mcp-vcr` transcripts directly within the official Inspector web UI.
+*   **Why it matters**: Allows developers to view session timelines, modify responses step-by-step, and save changes back to golden snapshot files interactively.
 
----
+### 4. Automated Client Compatibility Matrix
+*   **Objective**: Ensure your server behaves identically regardless of the client (Claude Desktop, Cursor, Windsurf, or custom wrappers).
+*   **Mechanism**: Setup automated testing runner profiles to record transcripts from different clients, run structural diff comparisons, and generate a dynamic compatibility matrix.
+*   **Why it matters**: Provides server authors with a "Compatible with Claude/Cursor/Windsurf" verified seal of approval, identifying and warning about client-specific quirks automatically.
 
-## Milestone Breakdown (12 weeks)
+### 5. HTTP/SSE Transport Recording
+*   **Objective**: Complete transport coverage by supporting MCP's second official transport layer.
+*   **Mechanism**: Implement a Server-Sent Events (SSE) bidirectional proxy that intercepts, logs, and replays HTTP/SSE streams without changing the underlying JSON-RPC transaction model.
+*   **Why it matters**: Unlocks regression testing for cloud-deployed or remote MCP servers that communicate over HTTP/SSE rather than local stdio subprocess pipes.
 
-### **Weeks 1–2: Transcript Schema v1 & Versioning**
-
-**Goal:** Define and implement the versioned transcript specification.
-
-**Deliverables:**
-- [x] Write formal transcript schema (JSON Schema or equivalent).
-- [x] Add `version: 1` header to all transcripts.
-- [x] Implement validator (CLI tool and library) that checks transcript validity.
-- [x] Document backward-compatibility strategy for future schema versions.
-- [x] Update all existing transcript examples in docs/fixtures.
-- [x] Add `schema_version` field to transcript metadata.
-- [x] Create `.mcp-vcr.yaml` schema documentation.
-
-**Milestone Check:**
-- All test fixtures are valid against v1 schema.
-- Validator rejects malformed transcripts with clear errors.
-- Schema is published (in repo and docs).
-
-**Success Metrics:**
-- ✅ `mcp-vcr validate session.yaml` works
-- ✅ Schema docs are clear and complete
-- ✅ All existing sessions upgrade cleanly to v1
+### 6. Rust Transport Core (Performance Optimization)
+*   **Objective**: Reduce pipe pumping overhead for high-throughput development pipelines.
+*   **Mechanism**: Rewrite the core asyncio transport loops and JSON framing/parsing pumps in Rust, exposing them to Python via PyO3.
+*   **Why it matters**: An optional optimization path kept in reserve only after profiling proves python pipe structures are a practical bottleneck during large file (e.g. megabyte payload) exchanges.
 
 ---
 
-### **Weeks 3–4: Normalization Layer**
+## When to Revisit the Roadmap
 
-**Goal:** Implement deduplicated normalizers as core architecture.
+Work on these deferred areas will be prioritized based on key usage checkpoints:
 
-**Deliverables:**
-- [ ] Define `Normalizer` abstraction (apply transform to payload).
-- [ ] Implement built-in normalizers:
-  - Timestamp canonicalization (e.g., `2024-01-15T14:30:22Z` → `NORM_TIMESTAMP`)
-  - Request ID replacement (numeric IDs → `NORM_ID_1`, `NORM_ID_2`, …)
-  - UUID masking (UUIDs → `NORM_UUID_<index>`)
-  - Session token scrubbing
-  - Nondeterministic metadata (cursor values, pagination tokens)
-- [ ] Config-driven normalizer selection (`.mcp-vcr.yaml`).
-- [ ] Integrate normalizers into replay and diff pipelines.
-- [ ] Documentation: which fields are normalized by default, how to customize.
-
-**Milestone Check:**
-- Replay/diff diffs are noise-free even for sessions with timestamps.
-- Two replays of the same transcript produce identical responses (when normalized).
-- Normalizers can be toggled on/off.
-
-**Success Metrics:**
-- ✅ Sample non-deterministic session diffs cleanly with normalization
-- ✅ Normalizers are configurable per-project
-- ✅ Normalization is transparent to end users (works by default)
-
----
-
-### **Weeks 5–6: Golden Snapshot Testing Infrastructure**
-
-**Goal:** Add CLI and integration for golden snapshot regression testing.
-
-**Deliverables:**
-- [ ] CLI: `mcp-vcr snapshot <session>` — apply normalizers, save golden.
-- [ ] CLI: `mcp-vcr verify snapshots/` — compare replayed responses against golds, return diff.
-- [ ] `mcp-vcr verify` exit code: 0 = pass, 1 = regression detected.
-- [ ] Output format: human-readable text + JSON for CI integration.
-- [ ] Integration guide: how to use in pytest, GitHub Actions, other CI.
-- [ ] Documentation: "Golden Snapshot Testing for MCP".
-- [ ] Snapshot storage convention: `snapshots/<session_id>_golden.yaml`.
-
-**Milestone Check:**
-- CI can run `mcp-vcr verify snapshots/ -- python server.py` and get clear pass/fail.
-- Snapshots are human-reviewable and diffable in git.
-- Snapshot workflow is documented with real examples.
-
-**Success Metrics:**
-- ✅ Example CI workflow (GitHub Actions YAML) is included
-- ✅ Snapshots can be updated with a single command
-- ✅ Developers can use snapshots as pytest fixtures
-
----
-
-### **Weeks 7–8: Replay & Diff Refactor for Stability**
-
-**Goal:** Refactor replay and diff to depend on versioning and normalization.
-
-**Deliverables:**
-- [ ] Replay engine checks transcript version before loading.
-- [ ] Replay engine applies normalizers to replayed responses for comparison.
-- [ ] Diff engine is version-aware (warns on version mismatch).
-- [ ] Diff engine applies normalizers before structural/semantic/strict comparison.
-- [ ] Add regression tests: older transcript versions still replay/diff correctly.
-- [ ] Document diff output formats: text, JSON, GitHub annotations.
-
-**Milestone Check:**
-- Replay of v1 transcripts is stable and deterministic.
-- Diff correctly handles non-deterministic fields without noise.
-- Version mismatch warnings are clear.
-
-**Success Metrics:**
-- ✅ All diff tests pass with normalized output
-- ✅ Replaying v0.1 (pre-versioning) sessions handles gracefully
-- ✅ Diff output is actionable and noise-free
-
----
-
-### **Weeks 9–10: Fixtures, Tests & Documentation**
-
-**Goal:** Ship with comprehensive examples and onboarding.
-
-**Deliverables:**
-- [ ] Sample transcripts (fixtures/) for:
-  - Simple `initialize` + `tools/list`
-  - Tool invocation with binary response
-  - Streaming/notification messages
-  - Error cases (server crash, malformed JSON)
-  - Sessions with timestamps (normalization demo)
-- [ ] Developer guide: "Getting Started with mcp-vcr"
-- [ ] Architecture guide: updated with versioning + normalization.
-- [ ] Contributing guide: how to add tests, update fixtures.
-- [ ] FAQ: common gotchas and debugging.
-- [ ] Unit test suite covering:
-  - Transcript validation
-  - Normalization transforms
-  - Replay/diff stability
-  - Version compatibility
-
-**Milestone Check:**
-- Developers can follow the guide and record/replay/snapshot in 10 minutes.
-- All fixtures validate and pass regression tests.
-- Test coverage >80% for core modules.
-
-**Success Metrics:**
-- ✅ README links to "Getting Started"
-- ✅ Sample CI workflow (`.github/workflows/mcp-regression.yml`) works out of the box
-- ✅ Test suite runs cleanly in CI
-
----
-
-### **Weeks 11–12: Polish, External Integration Exploration, Handover**
-
-**Goal:** Finalize core, explore optional integrations, prepare for external adoption.
-
-**Deliverables:**
-- [ ] CLI polish:
-  - `mcp-vcr list` — show recorded sessions, metadata, timestamps
-  - `mcp-vcr inspect <session_id>` — basic session details
-  - Better help text and error messages
-- [ ] Performance audit: ensure record/replay/diff are fast (no timeouts on large transcripts).
-- [ ] **Exploratory (not blocking):**
-  - Inspector integration POC (can load transcript and replay)
-  - JSON schema export (for third-party tooling)
-- [ ] Release checklist and version bump (→ v0.2).
-- [ ] Handover docs: what's next, known limitations, future work.
-- [ ] Write "What's New in v0.2" release notes.
-
-**Milestone Check:**
-- Core is stable and production-ready for early external users.
-- Optional integrations (Inspector, etc.) are additive, not blocking.
-- Handover documentation is clear.
-
-**Success Metrics:**
-- ✅ v0.2 release published with changelog
-- ✅ "Getting Started" guide is used successfully by 1-2 external projects
-- ✅ No core regressions on v0.1 transcripts
-
----
-
-## What We're **Not** Doing (Yet)
-
-**Rust transport core** — Python is fast enough. We don't know the performance bottlenecks yet.
-
-**Compatibility matrix** — Valuable but not core. This is Q3 work, after the base is stable.
-
-**Deep Inspector integration** — Keep it exploratory and additive. Not architectural.
-
-**Timing-faithful replay** — Planned, but secondary to versioning and normalization.
-
-**Fuzz mode** — Important for server robustness, but comes after core is locked down.
-
----
-
-## Evaluation & Checkpoints
-
-**Weekly Standup**
-- What shipped?
-- What's blocked?
-- What changed in the plan?
-
-**Biweekly Milestone Review (every 2 weeks)**
-- Demo deliverables against milestone checklist.
-- Update docs/README.
-- Re-plan if off track.
-
-**Monthly (end of weeks 4, 8, 12)**
-- Full retrospective: what worked, what didn't?
-- Adjust priorities for next month.
-- Publish progress notes.
-
-**Success Criteria for Full Roadmap**
-- [ ] Versioned transcript schema v1 is locked.
-- [ ] Normalization is built-in and docs are clear.
-- [ ] Golden snapshot testing works end-to-end in CI.
-- [ ] All core modules have >80% test coverage.
-- [ ] "Getting Started" guide is complete and tested.
-- [ ] v0.2 is released and used by ≥1 external project.
-
----
-
-## Future Work (Q3+, After Core is Stable)
-
-Once the above is shipped, the next priorities are:
-
-1. **Timing-faithful replay** — use transcript timestamps for deterministic timing tests.
-2. **Fuzz mode** — mutate client messages, probe server robustness.
-3. **Inspector integration** — load transcripts directly into Inspector UI.
-4. **Compatibility matrix** — record from Claude Desktop, Cursor, Windsurf; diff results.
-5. **CLI polish** — session browser, filtering, advanced inspection.
-6. **Rust prototype** — only after we understand perf bottlenecks.
-
----
-
-## Architecture Notes
-
-### Why Versioning First?
-
-- **Prevents future breakage.** Once Inspector or external tools depend on transcripts, changing the format silently breaks them.
-- **Enables confident evolution.** Schema v2 can be introduced with clear upgrade paths.
-- **Foundation for everything else.** Replay, normalization, and diff all need to know which version they're working with.
-
-### Why Normalization is Core Architecture?
-
-- **Determinism is the invariant.** Nondeterministic fields (timestamps, UUIDs) break replay/diff unless they're normalized.
-- **Not just diffing.** Normalization applies to replay too — ensures replayed responses are comparable.
-- **Prevents noise.** Without it, every diff is cluttered with "timestamp changed" false positives.
-
-### Why Golden Snapshots?
-
-- **Pytest for MCP.** Developers are familiar with golden snapshots (`snapshot_test.py`).
-- **CI-friendly.** Exit codes, no language barriers, works everywhere.
-- **Reduces test boilerplate.** Instead of hand-crafted assertions, just compare transcripts.
-
----
-
-## Summary
-
-This roadmap is laser-focused on the core invariant: **a deterministic, replayable, human-readable MCP transcript format**. Everything else — Inspector, fuzzing, timing, compatibility matrices — flows from this foundation and can be added later without breaking what came before.
-
-The first 8 weeks lock down versioning, normalization, and snapshot testing. Weeks 9–12 are polish and optional exploration. By end of month 3, mcp-vcr is ready for external adoption with clear guarantees about stability and evolveability.
+1.  **Stable Adoption**: The core v0.2 CLI is actively used by $\ge$ 1 external project.
+2.  **Performance Auditing**: Comprehensive profiling is completed against large transcripts (e.g., sessions with >100 interactions or >50MB files).
+3.  **Community Signals**: Developer feedback identifies which deferred area is most highly wanted for their workflows.

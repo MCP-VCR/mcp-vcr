@@ -1,448 +1,187 @@
-# mcp-vcr
+# MCP-VCR 📼
 
-**Record and replay stdio MCP server conversations. Catch regressions before your users do.**
+**Record and replay stdio MCP server conversations. Catch regressions in CI before your users do.**
 
-```
+```bash
+# Record a live session from any client
 mcp-vcr record -- python my_server.py
-mcp-vcr replay sessions/init_001.yaml -- python my_server.py
+
+# Create a normalized golden snapshot
+mcp-vcr snapshot sessions/voice_session.yaml
+
+# Verify your current code against all snapshots
+mcp-vcr verify snapshots/ -- python server.py
 ```
 
 ---
 
-## What is this?
+## What is MCP-VCR?
 
-`mcp-vcr` is a transparent stdio proxy and replay framework for [MCP](https://modelcontextprotocol.org) servers.
+`mcp-vcr` is a transparent, developer-first stdio proxy and regression testing framework for [Model Context Protocol (MCP)](https://modelcontextprotocol.org) servers. 
 
-It sits between an MCP client (Claude Desktop, Cursor, Windsurf, Inspector) and your server, records every JSON-RPC message in both directions, and stores them as human-readable YAML transcripts.
+It sits cleanly between an MCP client (such as Claude Desktop, Cursor, Windsurf, or MCP Inspector) and your server, records every JSON-RPC 2.0 exchange in both directions, and saves them as highly human-readable, git-diffable YAML transcripts.
 
-**Use cases:**
+### Key Capabilities
 
-- **Regression tests** — replay them against a new version of your server and diff the responses
-- **Bug reproduction cases** — capture the exact sequence that triggered a failure and share it
-- **CI fixtures** — run integration tests without a live client
-- **Protocol audit logs** — understand exactly what your server is doing during a session
-
-Think of it as `vcrpy` or Ruby's VCR gem, but for MCP stdio traffic.
+*   **Deterministic Replay**: Replay recorded client commands against your server and automatically match responses by JSON-RPC `id` values.
+*   **Golden Snapshots**: Strips out non-deterministic noise (timestamps, UUIDs, request/response IDs, page cursors, local paths) to form a reproducible, byte-identical contract test suite.
+*   **In-Flight Redaction**: Walks message payloads recursively to scrub credentials, OpenAI keys, bearer tokens, passwords, and absolute user directory paths *before* writing transcripts to your disk.
+*   **Layered Diff Engines**: Spot structural schema drift, type changes, or value regressions using `--structural`, `--semantic`, or `--strict` diffing options.
+*   **CI-Native Checking**: Verify your whole server against dozens of snapshots with a single command; exits with code `0` on success or code `1` on regression.
 
 ---
 
-## The problem it solves
+## The Problems It Solves
 
-| Pain | What mcp-vcr does |
-|---|---|
-| "Works in Inspector but breaks in Claude Desktop" | Record real sessions from each client; replay and compare |
-| Stdio traffic is invisible during debugging | Transparent interception with timestamped transcripts |
-| Can't reproduce that user-reported bug | Deterministic replay from a saved session |
-| Protocol regressions ship silently | Response diffing between old and new server versions |
-| Integration tests require a running client | Fixture-based replay with no client needed |
-| Transcripts contain secrets | Automatic redaction before storage |
+| Developer Pain | How `mcp-vcr` Fixes It |
+| :--- | :--- |
+| **Flaky CI Pipelines** | Golden snapshots normalize IDs, UUIDs, and timestamps, preventing false negatives. |
+| **Invisible Stdio Streams** | Intercepts, structures, and logs bidirectional traffic with relative millisecond offsets. |
+| **Hard-to-Reproduce Bugs** | Capture a failing sequence from Claude Desktop and replay it locally in one command. |
+| **Silent API Schema Drift** | Strict structural diffs flag added/removed tools, arguments, or changed types immediately. |
+| **Credential Leaks in Git** | Built-in redaction keeps secrets and private absolute filesystem paths out of your codebase. |
 
 ---
 
 ## Installation
 
+Install `mcp-vcr` inside your virtual environment using poetry or pip:
+
 ```bash
+# Using poetry (recommended)
+poetry add mcp-vcr
+
+# Or using pip
 pip install mcp-vcr
 ```
 
-Requires Python 3.10+. No additional services, databases, or cloud accounts required.
+*Requires Python 3.10+. Zero databases, heavy external services, or cloud setups required.*
 
 ---
 
-## Quickstart
+## Quickstart Guide
 
-### Record a session
-
-```bash
-mcp-vcr record -- python my_server.py
-```
-
-Point your MCP client (Claude Desktop, Cursor, etc.) at `mcp-vcr` as the server command. All traffic is recorded and written to `sessions/` as a YAML transcript.
-
-```yaml
-# sessions/session_20240115_143022.yaml
-meta:
-  recorded_at: "2024-01-15T14:30:22Z"
-  server_command: ["python", "my_server.py"]
-  session_id: "a3f2b1c9"
-
-messages:
-  - t: 0
-    dir: c2s
-    payload:
-      jsonrpc: "2.0"
-      id: 1
-      method: initialize
-      params:
-        protocolVersion: "2024-11-05"
-        capabilities:
-          roots: { listChanged: true }
-        clientInfo:
-          name: "claude-desktop"
-          version: "0.10.0"
-
-  - t: 47
-    dir: s2c
-    payload:
-      jsonrpc: "2.0"
-      id: 1
-      result:
-        protocolVersion: "2024-11-05"
-        capabilities:
-          tools: {}
-        serverInfo:
-          name: "my-server"
-          version: "1.0.0"
-
-  - t: 83
-    dir: c2s
-    payload:
-      jsonrpc: "2.0"
-      id: 2
-      method: tools/list
-      params: {}
-```
-
-### Replay against your server
+### 1. Record a Live Session
+Run your server through the record proxy. Any standard stdio client interacting with this pipe will be recorded:
 
 ```bash
-mcp-vcr replay sessions/session_20240115_143022.yaml -- python my_server.py
+mcp-vcr record --name init_tools_list -- python my_server.py
 ```
+This produces an auto-redacted transcript inside the default `sessions/` directory (which you should add to `.gitignore`).
 
-`mcp-vcr` feeds the recorded client messages into your server in order and captures the responses.
-
-### Diff responses
+### 2. Create a Golden Snapshot
+Turn a raw recorded session into a normalized, stable regression baseline:
 
 ```bash
-mcp-vcr diff \
-  sessions/session_20240115_143022.yaml \
-  sessions/session_20240116_091500.yaml
+mcp-vcr snapshot sessions/session_20260518_init_tools_list.yaml
 ```
+This creates a golden snapshot file under the `snapshots/` directory: `snapshots/init_tools_list_golden.yaml`. **Commit this folder to your Git repository.**
 
-Output:
+### 3. Verify for Regressions in CI
+Run the verification command. It replays client traffic from all golden snapshots against your live server code:
 
-```diff
-  tools/list response:
-    tools[2]:
-+     name: "new_tool"
-+     description: "Does a new thing"
-      inputSchema:
--       required: ["query"]
-+       required: ["query", "limit"]
-```
-
-### Run as a regression test
-
-```bash
-mcp-vcr check sessions/session_20240115_143022.yaml -- python my_server.py
-# exit 0 = no regressions
-# exit 1 = responses differ (diff printed to stderr)
-```
-
-Plug directly into CI:
-
-```yaml
-# .github/workflows/mcp-regression.yml
-- name: MCP regression check
-  run: mcp-vcr check sessions/*.yaml -- python my_server.py
-```
-
-For integrating regression tests with `pytest`, see the [Pytest Integration Guide](docs/pytest-integration.md).
-
----
-
-## Golden Snapshots
-
-To establish stable contract baselines (ignoring timestamps, UUIDs, request IDs, and cursors), use the golden snapshot workflow:
-
-```bash
-mcp-vcr snapshot sessions/my_session.yaml
-# Generates normalized golden file: snapshots/my_session_golden.yaml
-```
-
-To verify regressions against all golden snapshots (e.g. in CI):
 ```bash
 mcp-vcr verify snapshots/ -- python my_server.py
 ```
+*   **Exit code `0`**: All responses match their golden snapshots perfectly.
+*   **Exit code `1`**: Regressions or schema mismatches detected. Prints a readable diff to stderr.
 
-To intentionally overwrite goldens when making server changes:
+### 4. Overwrite Goldens After Intentional Schema Changes
+If you intentionally add a new tool or change response formatting, update your golden snapshots using the `--update` flag:
+
 ```bash
 mcp-vcr verify --update snapshots/ -- python my_server.py
 ```
-
-> [!IMPORTANT]
-> The `snapshots/` directory contains normalized, stable, and redacted regression baselines. It **should be committed to git** (unlike the `sessions/` directory, which is gitignored).
+Review the changes using `git diff snapshots/` before committing.
 
 ---
 
-## Claude Desktop integration
+## Claude Desktop Configuration
 
-Add `mcp-vcr` as the server command in your Claude Desktop config:
+To capture real interactions from the Claude Desktop app, add `mcp-vcr` as your server launcher inside `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "my-server": {
       "command": "mcp-vcr",
-      "args": ["record", "--", "python", "/path/to/my_server.py"],
-      "env": {}
+      "args": [
+        "record",
+        "--name",
+        "desktop_session",
+        "--",
+        "python",
+        "/absolute/path/to/my_server.py"
+      ]
     }
   }
 }
 ```
 
-Every Claude Desktop session is now automatically recorded. Switch to `replay` to run tests without a live server.
+> [!NOTE]
+> The `--` separator is required to clearly segregate MCP-VCR command-line flags from the command used to launch your actual server process.
 
 ---
 
-## Redaction
+## Redaction & Security
 
-By default, `mcp-vcr` redacts known secret patterns before writing transcripts. This makes sessions safe to commit to version control and share with collaborators.
+`mcp-vcr` walks JSON-RPC message payloads recursively to redact known secret keys, environment paths, and pattern matches *before* writing transcripts. The client and server receive the raw streams intact; only the stored file is sanitized.
 
-**Default redaction targets:**
+*   **Field Rules**: Fields matching `api_key`, `token`, `secret`, `password`, `credential`, or `authorization` are replaced with `<REDACTED_fieldname>`.
+*   **Pattern Rules**: Regex strings (e.g., Bearer tokens, AWS keys, OpenAI `sk-` keys) are scrubbed.
+*   **Path Rules**: Absolute filesystem paths (e.g., `/home/username/...`) are replaced with `<PATH>`.
 
-- `Authorization` header values
-- Fields named `token`, `api_key`, `secret`, `password`, `credential`
-- Values matching common secret patterns (Bearer tokens, AWS keys, etc.)
-- Absolute filesystem paths (replaced with `<PATH>`)
-
-**Custom redaction rules:**
+Configure custom rules in your project's `.mcp-vcr.yaml` file:
 
 ```yaml
-# .mcp-vcr.yaml
 redact:
   fields:
-    - my_custom_token
-    - internal_user_id
+    - secret_config_token
   patterns:
-    - "sk-[a-zA-Z0-9]{32,}"
+    - "custom-auth-[a-zA-Z0-9]{16}"
   paths: true
 ```
 
-Redacted values appear as `<REDACTED_field_name>` in transcripts.
+---
+
+## What Lies Ahead (Roadmap)
+
+We are laser-focused on keeping our **versioned, deterministic transcript core** stable and backward-compatible. The following major capabilities are scheduled for implementation:
+
+### 1. Timing-Faithful Replay
+Optionally use the recorded `t` relative millisecond values from the transcript to insert deterministic `asyncio.sleep` pauses between client-to-server (`c2s`) messages. Crucial for verifying servers with timeout-sensitive states.
+
+### 2. Fuzz Testing Mode
+Add `mcp-vcr fuzz` to replay recorded snapshots with randomized mutations (truncated payloads, type confusion, missing required schema fields, and boundary values) to audit server error handling and crash resistance.
+
+### 3. MCP Inspector Integration
+Coordinating with the MCP community to support loading `mcp-vcr` transcripts directly into the official MCP Inspector web interface for timeline visualization, message inspection, and interactive debugging.
+
+### 4. Compatibility Matrix Report
+Record and diff identical session exchanges across major MCP client runtimes (Claude Desktop, Cursor, Windsurf, etc.) to generate a public compatibility matrix, letting authors prove their servers work flawlessly across the client ecosystem.
+
+### 5. HTTP/SSE Recording
+Extending the stdio proxy architecture to support recording and replaying **HTTP/Server-Sent Events (SSE)**, the second official MCP transport layer.
 
 ---
 
-## Transcript format
+## Design Principles
 
-Transcripts are designed to be human-readable, diffable, and git-friendly.
-
-```yaml
-meta:
-  recorded_at: "2024-01-15T14:30:22Z"
-  server_command: ["python", "my_server.py"]
-  session_id: "a3f2b1c9"
-  client_hint: "claude-desktop"   # inferred from initialize params
-  protocol_version: "2024-11-05"
-
-messages:
-  - t: 0          # milliseconds since session start
-    dir: c2s       # c2s = client→server, s2c = server→client
-    payload: { ... }
-
-  - t: 47
-    dir: s2c
-    payload: { ... }
-```
-
-**Timestamps** record relative timing from session start. Replay is timing-agnostic by default (messages are fed as fast as the server responds). Timing-faithful replay is a planned future feature.
+*   **Local-First & Offline**: Zero telemetry, zero external database integrations, and zero mandatory cloud services. Your tests run fast and offline.
+*   **Protocol-Transparent**: The proxy acts as a silent observer. It never intercepts, manipulates, or alters protocol-level capability negotiations between the client and server.
+*   **Git-Friendly Transcripts**: Structured YAML outputs with stable key ordering, deterministic naming, and deep secret scrubbing are designed to be checked in alongside your code.
 
 ---
 
-## Diff modes
+## Developer Resources
 
-| Mode | What it checks |
-|---|---|
-| `--structural` (default) | Field presence and type — catches capability changes and schema drift |
-| `--semantic` | Values within expected variance — useful for non-deterministic servers |
-| `--strict` | Exact byte-level match — useful for deterministic servers in CI |
-
-```bash
-mcp-vcr diff --structural old.yaml new.yaml
-mcp-vcr diff --strict fixture.yaml current.yaml
-```
-
----
-
-## CLI reference
-
-```
-mcp-vcr record [OPTIONS] -- <server_command>
-mcp-vcr replay <session> [OPTIONS] -- <server_command>
-mcp-vcr diff [OPTIONS] <session_a> <session_b>
-mcp-vcr check <session_glob> [OPTIONS] -- <server_command>
-mcp-vcr redact <session> [OPTIONS]
-mcp-vcr inspect <session>
-```
-
-**`record` options:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--output`, `-o` | `sessions/` | Directory or file path for transcript |
-| `--name` | auto-timestamped | Session name |
-| `--no-redact` | false | Disable automatic redaction |
-| `--config` | `.mcp-vcr.yaml` | Path to config file |
-
-**`replay` options:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--timeout` | `5000` | ms to wait for each server response |
-| `--strict` | false | Fail if server response differs from recorded |
-
-**`diff` options:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--mode` | `structural` | `structural`, `semantic`, or `strict` |
-| `--ignore` | none | Comma-separated field paths to ignore |
-| `--format` | `text` | `text`, `json`, or `github` |
-
----
-
-## Configuration
-
-```yaml
-# .mcp-vcr.yaml
-sessions_dir: sessions/
-default_diff_mode: structural
-
-redact:
-  fields: []
-  patterns: []
-  paths: true
-
-record:
-  auto_name: true       # use timestamp-based names
-
-replay:
-  timeout_ms: 5000
-  fail_on_diff: false   # set true for CI
-
-ignore_fields:          # always skip in diffs
-  - "$.result.serverInfo.version"
-```
-
----
-
-## Release Timeline & Status
-
-**Current Status: Phase 3 Complete ✓ (Transcript Schema v1)**
-
-You've successfully completed the core recording, replay, and transcript infrastructure. The foundation is solid.
-
-### Phase Breakdown & Release Dates
-
-| Phase | Status | Timeline | Deliverables |
-|---|---|---|---|
-| **1. Transport & Proxy Core** | ✓ | Weeks 1–2 | asyncio subprocess launcher, bidirectional pipes, stderr forwarding, large message buffering, graceful error handling |
-| **2. Message Interceptor & Timestamps** | ✓ | Weeks 2–3 | Monotonic timestamps, direction tagging (c2s/s2c), JSON-RPC message classification, non-blocking recorder |
-| **3. Transcript Schema v1** | ✓ | Weeks 3–4 | YAML schema, streaming writes, stable key ordering, lazy metadata backfill, session ID generation, JSON Schema validator, `mcp-vcr validate` |
-| **4. Redaction Layer** | 🔄 In Progress | Week 4 | Field-name redaction, regex patterns, path redaction, config-driven rules |
-| **5. Normalization Layer** | 📋 Planned | Weeks 5–6 | Timestamp canonicalization, UUID masking, request ID replacement, cursor token normalization |
-| **6. Replay Engine** | 📋 Planned | Weeks 6–7 | Deterministic replay loop, notification handling, per-request timeouts, incomplete replay markers |
-| **7. Diff Engine** | 📋 Planned | Weeks 7–8 | Response pairing, structural/semantic/strict modes, text/JSON/GitHub annotations formats |
-| **8. Golden Snapshot Testing** | 📋 Planned | Weeks 8–9 | `mcp-vcr snapshot`, storage conventions, `mcp-vcr verify`, snapshot updates, GitHub Actions examples |
-| **9. CLI Polish** | 📋 Planned | Weeks 10–11 | Full flag coverage, help text, error messages, `mcp-vcr list` and `mcp-vcr inspect` |
-| **10. Tests & Documentation** | 📋 Planned | Weeks 11–12 | Sample fixtures, unit tests (80%+ coverage), Getting Started, CI guide, ARCHITECTURE updates |
-
-### Release Milestones
-
-| Release | ETA | What's Included | Best For |
-|---|---|---|---|
-| **v0.1.0** | **Late May 2026** | Phases 1–3: Core recording/replay, YAML transcripts, manual secret redaction | Recording sessions locally; early adopters testing multiple clients |
-| **v0.2.0** | **Late June 2026** | Phases 4–8: Automatic redaction, normalization, full replay/diff, golden snapshots, GitHub Actions integration | **Production teams**: CI/CD pipelines, regression testing in CI, snapshot-driven workflows |
-| **v0.3.0** | **Late July 2026** | Phases 9–10: Polished CLI, comprehensive tests (80%+ coverage), full documentation, inspection tools | Full-scale team adoption; mature, documented testing framework |
-
-### When Will It Be Useful?
-
-| Timeframe | Capability | Recommended For |
-|---|---|---|
-| **Now** | Manual recording & replay | Solo developers testing locally |
-| **v0.1.0 (late May)** | Working tool; basic regression detection | Early adopters; manual CI integration |
-| **v0.2.0 (late June)** | **Production-ready** | Teams shipping to CI; security-conscious projects (auto-redaction); multi-client testing |
-| **v0.3.0 (late July)** | Mature & polished | Organization-wide adoption; large teams |
-
-### Success Criteria for v0.2.0 (Production Release)
-
-- [x] Versioned transcript schema v1 is locked
-- [ ] Normalization is built-in and documented
-- [ ] Golden snapshot testing works end-to-end in CI
-- [ ] Core modules have >80% test coverage
-- [ ] Getting Started guide complete
-- [ ] v0.2 released and used by ≥1 external project
-
----
-
-## Roadmap
-
-### v0.1 — MVP (May 2026)
-- [x] stdio interception and subprocess management
-- [x] bidirectional transcript recording
-- [x] YAML transcript format
-- [x] deterministic replay
-- [x] structural JSON diff
-- [x] automatic secret redaction
-
-### v0.2 — CI integration (June 2026)
-- [ ] `check` command with exit codes
-- [ ] GitHub Actions output format
-- [ ] transcript normalization (stable ordering for diffing)
-- [ ] golden snapshot workflow (`mcp-vcr snapshot update`)
-
-### v0.3 — Tooling (July 2026)
-- [ ] MCP Inspector integration
-- [ ] `inspect` TUI for timeline visualization
-- [ ] timing-faithful replay mode
-- [ ] fuzz mode (inject malformed messages, observe server behavior)
-
-### v0.4 — Compatibility matrix (Q3+ 2026)
-- [ ] multi-client recording (same server, different clients)
-- [ ] automated compatibility report across client/server pairs
-- [ ] public matrix publishing (opt-in)
-
----
-
-## How it compares
-
-| | mcp-vcr | Manual logging | MCP Inspector | Custom test harness |
-|---|---|---|---|---|
-| Records real client sessions | ✓ | ✗ | partial | ✗ |
-| Protocol-transparent | ✓ | — | ✓ | depends |
-| Git-friendly transcripts | ✓ | ✗ | ✗ | depends |
-| Deterministic replay | ✓ | ✗ | ✗ | ✗ |
-| Response diffing | ✓ | ✗ | ✗ | manual |
-| No infra required | ✓ | ✓ | ✓ | ✓ |
-| Secret redaction | ✓ | ✗ | ✗ | depends |
-
----
-
-## Design principles
-
-**Local-first.** No telemetry, no cloud backend, no accounts. Transcripts live on your filesystem, go into your git repo, run in your CI.
-
-**Protocol-transparent.** The proxy never mutates messages, injects protocol behavior, or alters capability negotiation. It observes and records exactly what the client and server exchange.
-
-**Developer tool, not observability SaaS.** This is debugging and testing infrastructure for MCP server authors — not a monitoring product for production deployments.
-
-**Git-friendly by default.** YAML transcripts with stable field ordering, deterministic naming, and redacted secrets are designed to be committed alongside your server code.
-
----
-
-## Contributing
-
-```bash
-git clone https://github.com/MCP-VCR/mcp-vcr
-cd mcp-vcr
-pip install -e ".[dev]"
-pytest
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a full technical walkthrough of the proxy internals, transcript format, and replay engine.
+*   [Developer Getting Started Guide](docs/getting-started.md) (onboarding in under 10 minutes)
+*   [CI/CD Pipeline Integration Guide](docs/ci-integration.md) (setup for GitHub Actions & GitLab CI/CD)
+*   [Internal Architecture & Design Internals](Architecture.md) (deep-dive on proxy buffers and the normalization pipeline)
+*   [Pytest Integration Guide](docs/pytest-integration.md)
 
 ---
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE).
