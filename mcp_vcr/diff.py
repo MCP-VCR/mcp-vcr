@@ -4,6 +4,17 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 
+def _escape_github_message(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_github_property(value: str) -> str:
+    return (
+        _escape_github_message(value)
+        .replace(":", "%3A")
+        .replace(",", "%2C")
+    )
+
 def parse_json_path(path_str: str) -> List[str]:
     """Parse JSON path strings (supporting $, ., and [n] notation) into segments."""
     # Strip leading $ and dot
@@ -27,8 +38,12 @@ def path_matches(path: List[Any], ignore_segments: List[str]) -> bool:
         return False
     for p_seg, i_seg in zip(path, ignore_segments):
         p_str = str(p_seg)
-        if i_seg in ("*", "n"):
+        if i_seg == "*":
             continue
+        if i_seg == "n":
+            if isinstance(p_seg, int):
+                continue
+            return False
         if p_str != i_seg:
             return False
     return True
@@ -257,7 +272,10 @@ def run_diff(
     ignore_paths = []
     if ignore_fields:
         for f_path in ignore_fields:
-            ignore_paths.append(parse_json_path(f_path))
+            segments = parse_json_path(f_path.strip())
+            if not segments:
+                raise ValueError(f"Ignore path must target a field: {f_path!r}")
+            ignore_paths.append(segments)
     
     if mode == "strict" and ignore_paths:
         raise ValueError("ignore_fields is not supported in strict mode")
@@ -430,6 +448,8 @@ def format_github_diff(changes_by_id: Dict[Any, Dict[str, Any]], session_name: s
             severity = "error" if is_struct else "warning"
             path_detail = f"{path} {c_type}" if path else c_type
             
-            lines.append(f"::{severity} file={session_name},line=1::{method} response changed: {path_detail}")
+            file_prop = _escape_github_property(session_name)
+            message = _escape_github_message(f"{method} response changed: {path_detail}")
+            lines.append(f"::{severity} file={file_prop},line=1::{message}")
             
     return "\n".join(lines)
