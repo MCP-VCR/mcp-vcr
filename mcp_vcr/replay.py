@@ -25,6 +25,10 @@ class ReplayEngine:
         
         # Load from config file if not overridden
         self._load_config()
+        for key in ("timeout_ms", "settle_delay_ms"):
+            val = getattr(self, key)
+            if val is not None and (not isinstance(val, int) or isinstance(val, bool) or val < 0):
+                    raise ValueError(f"{key} must be a non-negative integer")
 
     def _load_config(self) -> None:
         config = {}
@@ -112,36 +116,59 @@ class ReplayEngine:
                 await asyncio.sleep(self.settle_delay_ms / 1000.0)
             else:
                 # Request: wait for exactly one response
+                expected_id = payload.get("id")
+                req_method = payload.get("method")
+                logger.debug(f"Request sent (ID: {expected_id}), waiting for response...")
                 try:
-                    logger.debug(f"Request sent (ID: {payload.get('id')}), waiting for response...")
-                    response_bytes = await asyncio.wait_for(
-                        process.stdout.readline(),
-                        timeout=self.timeout_ms / 1000.0
-                    )
-                    
-                    if not response_bytes:
-                        # EOF from server stdout indicates a crash
-                        logger.error("Server subprocess exited unexpectedly (EOF on stdout).")
-                        incomplete = True
-                        incomplete_reason = "server_crash"
+                    deadline = time.monotonic() + (self.timeout_ms / 1000.0)
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError()
+                            
+                        response_bytes = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=remaining
+                        )
+                        
+                        if not response_bytes:
+                            # EOF from server stdout indicates a crash
+                            logger.error("Server subprocess exited unexpectedly (EOF on stdout).")
+                            incomplete = True
+                            incomplete_reason = "server_crash"
+                            break
+                            
+                        response_str = response_bytes.decode("utf-8").strip()
+                        if not response_str:
+                            continue
+                            
+                        response_payload = json.loads(response_str)
+                        resp_id = response_payload.get("id")
+                        
+                        if resp_id is None:
+                            # Treat missing "id" as a notification: append it to responses but do not advance the request loop
+                            t_elapsed = int((time.monotonic() - t0) * 1000)
+                            responses.append(Message(
+                                t=t_elapsed,
+                                dir=Direction.S2C,
+                                payload=response_payload
+                            ))
+                            continue
+                            
+                        if resp_id == expected_id:
+                            # Found matching response
+                            t_elapsed = int((time.monotonic() - t0) * 1000)
+                            responses.append(Message(
+                                t=t_elapsed,
+                                dir=Direction.S2C,
+                                payload=response_payload
+                            ))
+                            break
+                            
+                    if incomplete:
                         break
-                        
-                    response_str = response_bytes.decode("utf-8").strip()
-                    if not response_str:
-                        continue
-                        
-                    response_payload = json.loads(response_str)
-                    t_elapsed = int((time.monotonic() - t0) * 1000)
-                    
-                    responses.append(Message(
-                        t=t_elapsed,
-                        dir=Direction.S2C,
-                        payload=response_payload
-                    ))
                 except asyncio.TimeoutError:
-                    req_id = payload.get("id")
-                    req_method = payload.get("method")
-                    logger.error(f"Replay timeout waiting for response to request ID {req_id} ({req_method})")
+                    logger.error(f"Replay timeout waiting for response to request ID {expected_id} ({req_method})")
                     incomplete = True
                     incomplete_reason = "timeout"
                     break

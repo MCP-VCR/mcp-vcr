@@ -31,6 +31,14 @@ for line in sys.stdin:
                 time.sleep(2)
             elif method == "crash":
                 sys.exit(42)
+            elif method == "async_notif":
+                notif = {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {"progress": 50}
+                }
+                sys.stdout.write(json.dumps(notif) + "\\n")
+                sys.stdout.flush()
                 
             resp = {
                 "jsonrpc": "2.0",
@@ -256,3 +264,52 @@ def test_replay_engine_config_loading(tmp_path):
     engine3 = ReplayEngine(config_path=non_existent)
     assert engine3.timeout_ms == 5000
     assert engine3.settle_delay_ms == 50
+
+@pytest.mark.asyncio
+async def test_replay_async_notification_captured(tmp_path, dummy_server_path):
+    """Verify that asynchronous notifications emitted by the server before the matching response are captured."""
+    transcript_yaml = """meta:
+  version: 1
+  recorded_at: "2026-05-18T12:00:00Z"
+  session_id: "abcdef78"
+  server_command: ["python", "dummy.py"]
+  schema_version: "1.0"
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 10
+      method: "async_notif"
+"""
+    t_path = tmp_path / "session_async_notif.yaml"
+    t_path.write_text(transcript_yaml, encoding="utf-8")
+    
+    engine = ReplayEngine()
+    server_args = [sys.executable, str(dummy_server_path)]
+    
+    output_path = await engine.run_replay(t_path, server_args=server_args)
+    
+    assert output_path.exists()
+    errors = validate_transcript(output_path)
+    assert not errors, f"Output transcript failed validation: {errors}"
+    
+    with open(output_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        
+    messages = data["messages"]
+    # Replay output should capture two s2c messages:
+    # 1. The progress notification (no "id")
+    # 2. The method response (id: 10)
+    assert len(messages) == 2
+    
+    notif_msg = messages[0]
+    assert notif_msg["dir"] == "s2c"
+    assert "id" not in notif_msg["payload"]
+    assert notif_msg["payload"]["method"] == "notifications/progress"
+    
+    resp_msg = messages[1]
+    assert resp_msg["dir"] == "s2c"
+    assert resp_msg["payload"]["id"] == 10
+    assert resp_msg["payload"]["result"]["method_echo"] == "async_notif"
+
