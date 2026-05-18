@@ -54,7 +54,7 @@ messages: []
     assert "version" in errors[0]["msg"] or "version" in errors[0]["loc"]
     
     with pytest.raises(ValidationError) as exc_info:
-        validate_file(test_file)
+        validate_file(test_file, allow_v0=False)
     assert any("version" in err["loc"] for err in exc_info.value.errors())
 
 

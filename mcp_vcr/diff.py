@@ -233,8 +233,19 @@ def run_diff(
     with open(transcript_b_path, "r", encoding="utf-8") as f:
         data_b = yaml.safe_load(f) or {}
         
-    messages_a_raw = data_a.get("messages", [])
-    messages_b_raw = data_b.get("messages", [])
+    meta_a = data_a.get("meta", {}) if isinstance(data_a, dict) else {}
+    meta_b = data_b.get("meta", {}) if isinstance(data_b, dict) else {}
+    version_a = meta_a.get("version", 0) if isinstance(meta_a, dict) else 0
+    version_b = meta_b.get("version", 0) if isinstance(meta_b, dict) else 0
+    
+    if version_a != version_b:
+        import logging
+        msg = f"Version mismatch: transcript A has version {version_a}, transcript B has version {version_b}."
+        logging.getLogger("mcp-vcr.diff").warning(msg)
+        raise ValueError("Cannot compare mismatched transcript versions: " + msg)
+        
+    messages_a_raw = data_a.get("messages", []) if isinstance(data_a, dict) else []
+    messages_b_raw = data_b.get("messages", []) if isinstance(data_b, dict) else []
     
     # Helper to map id to method
     id_to_method_a = {}

@@ -35,7 +35,7 @@ def validate(path: Path):
         all_ok = True
         for file in yaml_files:
             try:
-                validate_file(file)
+                validate_file(file, allow_v0=False)
                 click.secho(f"OK: '{file.name}' is valid.", fg="green")
             except ValidationError as e:
                 all_ok = False
@@ -56,7 +56,7 @@ def validate(path: Path):
     else:
         # Single-file validation
         try:
-            validate_file(path)
+            validate_file(path, allow_v0=False)
             click.secho(f"OK: Transcript '{path}' is valid.", fg="green")
         except ValidationError as e:
             click.secho(f"ERROR: Validation failed for '{path}':", fg="red", err=True)

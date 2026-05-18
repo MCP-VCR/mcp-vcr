@@ -1,0 +1,92 @@
+meta:
+  version: 1
+  recorded_at: "2026-05-18T10:10:00.000Z"
+  session_id: "c5b9d4e1"
+  server_command: ["python", "server.py"]
+  protocol_version: "2024-11-05"
+  client_hint: "claude-desktop"
+  schema_version: "1.0"
+
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      method: initialize
+      params:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        clientInfo:
+          name: "claude-desktop"
+          version: "1.0.0"
+
+  - t: 25
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      result:
+        protocolVersion: "2024-11-05"
+        capabilities:
+          tools:
+            listChanged: true
+        serverInfo:
+          name: "notif-server"
+          version: "0.1.0"
+
+  - t: 30
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      method: notifications/initialized
+
+  - t: 50
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 2
+      method: tools/list
+      params: {}
+
+  - t: 75
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 2
+      result:
+        tools:
+          - name: "tool_a"
+            description: "First tool"
+            inputSchema:
+              type: object
+
+  - t: 150
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      method: notifications/tools/list_changed
+
+  - t: 200
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 3
+      method: tools/list
+      params: {}
+
+  - t: 225
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 3
+      result:
+        tools:
+          - name: "tool_a"
+            description: "First tool"
+            inputSchema:
+              type: object
+          - name: "tool_b"
+            description: "Second new tool added dynamically"
+            inputSchema:
+              type: object

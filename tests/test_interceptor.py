@@ -98,3 +98,35 @@ async def test_recorder_exception_safety():
     # Yield loop execution to let task complete/fail silently
     await asyncio.sleep(0.05)
     mock_recorder.write.assert_called_once()
+
+
+def test_interceptor_lazy_metadata():
+    """Verify interceptor lazily captures client_hint and protocol_version on initialize exchanges."""
+    mock_recorder = MagicMock(spec=TranscriptRecorder)
+    interceptor = MessageInterceptor(recorder=mock_recorder)
+
+    # 1. clientInfo name in initialize request
+    init_req = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "clientInfo": {"name": "claude-test-client", "version": "1.0.0"}
+        }
+    }
+    interceptor.observe(init_req, Direction.C2S)
+    mock_recorder.update_lazy_metadata.assert_called_once_with(client_hint="claude-test-client")
+    mock_recorder.update_lazy_metadata.reset_mock()
+
+    # 2. protocolVersion in initialize response result
+    init_res = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2024-11-05-custom",
+            "serverInfo": {"name": "test-server", "version": "0.1.0"}
+        }
+    }
+    interceptor.observe(init_res, Direction.S2C)
+    mock_recorder.update_lazy_metadata.assert_called_once_with(protocol_version="2024-11-05-custom")
