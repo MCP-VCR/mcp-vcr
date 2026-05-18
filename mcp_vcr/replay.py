@@ -28,7 +28,7 @@ class ReplayEngine:
         for key in ("timeout_ms", "settle_delay_ms"):
             val = getattr(self, key)
             if val is not None and (not isinstance(val, int) or isinstance(val, bool) or val < 0):
-                    raise ValueError(f"{key} must be a non-negative integer")
+                raise ValueError(f"{key} must be a non-negative integer")
 
     def _load_config(self) -> None:
         config = {}
@@ -165,6 +165,12 @@ class ReplayEngine:
                                     payload=response_payload
                                 ))
                                 break
+                            else:
+                                # Non-matching response ID (unexpected)
+                                logger.debug(
+                                    "Received response with ID %r while expecting %r; continuing to wait",
+                                    resp_id, expected_id
+                                )
                                 
                         if incomplete:
                             break

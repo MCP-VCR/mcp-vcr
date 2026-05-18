@@ -357,4 +357,41 @@ messages:
     assert meta["incomplete"] is True
     assert meta["incomplete_reason"] == "malformed_response"
 
+@pytest.mark.asyncio
+async def test_replay_non_utf8_response(tmp_path, dummy_server_path):
+    """Verify that non-UTF-8 response bytes from the server are mapped to 'malformed_response'."""
+    transcript_yaml = """meta:
+  version: 1
+  recorded_at: "2026-05-18T12:00:00Z"
+  session_id: "abcdef88"
+  server_command: ["python", "dummy.py"]
+  schema_version: "1.0"
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      method: "non_utf8"
+"""
+    t_path = tmp_path / "session_non_utf8.yaml"
+    t_path.write_text(transcript_yaml, encoding="utf-8")
+    
+    engine = ReplayEngine()
+    server_args = [sys.executable, str(dummy_server_path)]
+    
+    output_path = await engine.run_replay(t_path, server_args=server_args)
+    
+    assert output_path.exists()
+    errors = validate_transcript(output_path)
+    assert not errors, f"Output transcript failed validation: {errors}"
+    
+    with open(output_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        
+    meta = data["meta"]
+    assert meta["incomplete"] is True
+    assert meta["incomplete_reason"] == "malformed_response"
+
+
 
