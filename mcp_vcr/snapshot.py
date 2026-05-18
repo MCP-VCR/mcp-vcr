@@ -76,11 +76,17 @@ def run_snapshot(session_yaml_path: Path) -> Path:
     golden_path = snapshots_dir / f"{name}_golden.yaml"
     
     # Write full, deterministic transcript with stable key ordering
-    with open(golden_path, "w", encoding="utf-8") as f:
+    temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
+    with open(temp_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(normalized_data, f, sort_keys=True, default_flow_style=False)
-        
-    # Verify golden against the schema
-    validate_file(golden_path)
+
+    try:
+        validate_file(temp_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+    temp_path.replace(golden_path)
     
     return golden_path
 
@@ -92,13 +98,13 @@ async def run_verify(
     """Replay sessions against a server, diff normalized results vs golden snapshots, and report regressions or update goldens."""
     p_snapshots = Path(snapshots_dir)
     if not p_snapshots.exists() or not p_snapshots.is_dir():
-        click.secho(f"No golden snapshots found in '{snapshots_dir}'", fg="yellow")
-        return 0
+        click.secho(f"ERROR: Snapshot directory '{snapshots_dir}' does not exist.", fg="red", err=True)
+        return 1
         
     golden_files = sorted(list(p_snapshots.glob("*_golden.yaml")) + list(p_snapshots.glob("*_golden.yml")))
     if not golden_files:
-        click.secho(f"No golden snapshots found in '{snapshots_dir}'", fg="yellow")
-        return 0
+        click.secho(f"ERROR: No golden snapshots found in '{snapshots_dir}'", fg="red", err=True)
+        return 1
         
     engine = ReplayEngine()
     
