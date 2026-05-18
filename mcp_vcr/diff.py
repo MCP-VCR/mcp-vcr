@@ -210,6 +210,11 @@ def run_diff(
     ignore_fields: Optional[List[str]] = None
 ) -> Dict[int, Dict[str, Any]]:
     """Compare two session transcripts and return differences grouped by request ID."""
+    allowed_modes = {"structural", "semantic", "strict"}
+    if mode not in allowed_modes:
+        raise ValueError(
+            f"Unsupported diff mode: {mode}. Expected one of: {', '.join(sorted(allowed_modes))}"
+        )
     with open(transcript_a_path, "r", encoding="utf-8") as f:
         data_a = yaml.safe_load(f) or {}
     with open(transcript_b_path, "r", encoding="utf-8") as f:
