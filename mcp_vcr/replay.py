@@ -92,113 +92,114 @@ class ReplayEngine:
         incomplete = False
         incomplete_reason = None
         
-        for msg in c2s_messages:
-            payload = msg.payload
-            
-            # Detect notifications by absence of id field (or id: null)
-            is_notification = ("id" not in payload) or (payload["id"] is None)
-            
-            # Serialize message
-            line_str = json.dumps(payload, sort_keys=True) + "\n"
-            
-            try:
-                process.stdin.write(line_str.encode("utf-8"))
-                await process.stdin.drain()
-            except (OSError, ConnectionResetError, BrokenPipeError) as e:
-                logger.error(f"Pipe error writing message to server: {e}")
-                incomplete = True
-                incomplete_reason = "pipe_error"
-                break
+        try:
+            for msg in c2s_messages:
+                payload = msg.payload
                 
-            if is_notification:
-                # Settle delay wait, do not wait for response
-                logger.debug(f"Notification sent, sleeping for {self.settle_delay_ms}ms settle delay.")
-                await asyncio.sleep(self.settle_delay_ms / 1000.0)
-            else:
-                # Request: wait for exactly one response
-                expected_id = payload.get("id")
-                req_method = payload.get("method")
-                logger.debug(f"Request sent (ID: {expected_id}), waiting for response...")
+                # Detect notifications by absence of id field (or id: null)
+                is_notification = ("id" not in payload) or (payload["id"] is None)
+                
+                # Serialize message
+                line_str = json.dumps(payload, sort_keys=True) + "\n"
+                
                 try:
-                    deadline = time.monotonic() + (self.timeout_ms / 1000.0)
-                    while True:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise asyncio.TimeoutError()
-                            
-                        response_bytes = await asyncio.wait_for(
-                            process.stdout.readline(),
-                            timeout=remaining
-                        )
-                        
-                        if not response_bytes:
-                            # EOF from server stdout indicates a crash
-                            logger.error("Server subprocess exited unexpectedly (EOF on stdout).")
-                            incomplete = True
-                            incomplete_reason = "server_crash"
-                            break
-                            
-                        response_str = response_bytes.decode("utf-8").strip()
-                        if not response_str:
-                            continue
-                            
-                        response_payload = json.loads(response_str)
-                        resp_id = response_payload.get("id")
-                        
-                        if resp_id is None:
-                            # Treat missing "id" as a notification: append it to responses but do not advance the request loop
-                            t_elapsed = int((time.monotonic() - t0) * 1000)
-                            responses.append(Message(
-                                t=t_elapsed,
-                                dir=Direction.S2C,
-                                payload=response_payload
-                            ))
-                            continue
-                            
-                        if resp_id == expected_id:
-                            # Found matching response
-                            t_elapsed = int((time.monotonic() - t0) * 1000)
-                            responses.append(Message(
-                                t=t_elapsed,
-                                dir=Direction.S2C,
-                                payload=response_payload
-                            ))
-                            break
-                            
-                    if incomplete:
-                        break
-                except asyncio.TimeoutError:
-                    logger.error(f"Replay timeout waiting for response to request ID {expected_id} ({req_method})")
-                    incomplete = True
-                    incomplete_reason = "timeout"
-                    break
-                except (OSError, ConnectionResetError) as e:
-                    logger.error(f"Pipe error reading response from server: {e}")
+                    process.stdin.write(line_str.encode("utf-8"))
+                    await process.stdin.drain()
+                except (OSError, ConnectionResetError, BrokenPipeError) as e:
+                    logger.error(f"Pipe error writing message to server: {e}")
                     incomplete = True
                     incomplete_reason = "pipe_error"
                     break
-                except json.JSONDecodeError as e:
-                    logger.error(f"Malformed JSON response from server during replay: {e}")
-                    incomplete = True
-                    incomplete_reason = "malformed_response"
-                    break
                     
-        # 6. Graceful cleanup of server subprocess
-        try:
-            process.stdin.close()
-            await process.stdin.wait_closed()
-        except Exception as e:
-            logger.debug("Exception during stdin cleanup: %s", e)
-            
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.warning("Subprocess did not exit within timeout, killing subprocess...")
+                if is_notification:
+                    # Settle delay wait, do not wait for response
+                    logger.debug(f"Notification sent, sleeping for {self.settle_delay_ms}ms settle delay.")
+                    await asyncio.sleep(self.settle_delay_ms / 1000.0)
+                else:
+                    # Request: wait for exactly one response
+                    expected_id = payload.get("id")
+                    req_method = payload.get("method")
+                    logger.debug(f"Request sent (ID: {expected_id}), waiting for response...")
+                    try:
+                        deadline = time.monotonic() + (self.timeout_ms / 1000.0)
+                        while True:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise asyncio.TimeoutError()
+                                
+                            response_bytes = await asyncio.wait_for(
+                                process.stdout.readline(),
+                                timeout=remaining
+                            )
+                            
+                            if not response_bytes:
+                                # EOF from server stdout indicates a crash
+                                logger.error("Server subprocess exited unexpectedly (EOF on stdout).")
+                                incomplete = True
+                                incomplete_reason = "server_crash"
+                                break
+                                
+                            response_str = response_bytes.decode("utf-8").strip()
+                            if not response_str:
+                                continue
+                                
+                            response_payload = json.loads(response_str)
+                            resp_id = response_payload.get("id")
+                            
+                            if resp_id is None:
+                                # Treat missing "id" as a notification: append it to responses but do not advance the request loop
+                                t_elapsed = int((time.monotonic() - t0) * 1000)
+                                responses.append(Message(
+                                    t=t_elapsed,
+                                    dir=Direction.S2C,
+                                    payload=response_payload
+                                ))
+                                continue
+                                
+                            if resp_id == expected_id:
+                                # Found matching response
+                                t_elapsed = int((time.monotonic() - t0) * 1000)
+                                responses.append(Message(
+                                    t=t_elapsed,
+                                    dir=Direction.S2C,
+                                    payload=response_payload
+                                ))
+                                break
+                                
+                        if incomplete:
+                            break
+                    except asyncio.TimeoutError:
+                        logger.error(f"Replay timeout waiting for response to request ID {expected_id} ({req_method})")
+                        incomplete = True
+                        incomplete_reason = "timeout"
+                        break
+                    except (OSError, ConnectionResetError) as e:
+                        logger.error(f"Pipe error reading response from server: {e}")
+                        incomplete = True
+                        incomplete_reason = "pipe_error"
+                        break
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        logger.error(f"Malformed JSON or decode error response from server during replay: {e}")
+                        incomplete = True
+                        incomplete_reason = "malformed_response"
+                        break
+        finally:
+            # 6. Graceful cleanup of server subprocess
             try:
-                process.kill()
-                await process.wait()
+                process.stdin.close()
+                await process.stdin.wait_closed()
             except Exception as e:
-                logger.debug("Exception during process kill: %s", e)
+                logger.debug("Exception during stdin cleanup: %s", e)
+                
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Subprocess did not exit within timeout, killing subprocess...")
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception as e:
+                    logger.debug("Exception during process kill: %s", e)
                 
         # 7. Write derived replay output transcript
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

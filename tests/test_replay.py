@@ -35,6 +35,10 @@ for line in sys.stdin:
                 sys.stdout.write("not-a-json\\n")
                 sys.stdout.flush()
                 continue
+            elif method == "non_utf8":
+                sys.stdout.buffer.write(b"\\xff\\xfe\\xfd\\n")
+                sys.stdout.buffer.flush()
+                continue
             elif method == "async_notif":
                 notif = {
                     "jsonrpc": "2.0",
