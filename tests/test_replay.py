@@ -139,7 +139,7 @@ async def test_replay_successful_integration(sample_transcript_path, dummy_serve
     assert meta["protocol_version"] == "2024-11-05"
     assert "session_id" in meta
     assert "-replay-" in meta["session_id"]
-    assert "incomplete" not in meta
+    assert meta.get("incomplete", False) is False
     
     messages = data["messages"]
     # Replay output should contain only captured s2c messages
