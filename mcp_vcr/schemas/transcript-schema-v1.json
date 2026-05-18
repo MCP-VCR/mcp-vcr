@@ -23,8 +23,8 @@
         },
         "session_id": {
           "type": "string",
-          "pattern": "^[a-f0-9]{8}$",
-          "description": "Unique 8-character hex session identifier."
+          "pattern": "^[a-f0-9]{8}(-replay-[a-zA-Z0-9_-]+)?$",
+          "description": "Unique 8-character hex session identifier, potentially with a derived replay suffix."
         },
         "server_command": {
           "type": "array",
@@ -44,6 +44,15 @@
         "schema_version": {
           "type": "string",
           "description": "The schema spec version (e.g. '1.0')."
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "True if the session replay was incomplete."
+        },
+        "incomplete_reason": {
+          "type": "string",
+          "enum": ["timeout", "server_crash", "pipe_error"],
+          "description": "Reason for replay failure."
         }
       }
     },

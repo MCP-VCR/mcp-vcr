@@ -18,6 +18,7 @@ from .transport import (
     pump_stderr,
     run_proxy
 )
+from .replay import ReplayEngine
 
 __all__ = [
     "Transcript",
@@ -40,5 +41,6 @@ __all__ = [
     "pump_s2c",
     "pump_stderr",
     "run_proxy",
+    "ReplayEngine",
 ]
 
