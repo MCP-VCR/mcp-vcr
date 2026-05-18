@@ -263,9 +263,9 @@ def check(session_glob, server_args):
             f"ERROR: Configuration error: {e}. "
             "What to try: check the validity of your configuration file or options.",
             fg="red",
-        err=True,
-    )
-    sys.exit(1)
+            err=True,
+        )
+        sys.exit(1)
     
     all_ok = True
     for path in matched_paths:
