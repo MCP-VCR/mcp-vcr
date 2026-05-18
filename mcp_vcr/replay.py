@@ -49,7 +49,7 @@ class ReplayEngine:
 
         def _read_non_negative_int(key: str, default: int) -> int:
             val = replay_cfg.get(key, default)
-            if isinstance(val, int) and val >= 0:
+            if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
                 return val
             logger.warning("Invalid replay.%s=%r; using default %d", key, val, default)
             return default
