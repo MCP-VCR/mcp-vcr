@@ -256,7 +256,16 @@ def check(session_glob, server_args):
     from .replay import ReplayEngine
     from .diff import run_diff, format_text_diff
     
-    engine = ReplayEngine()
+    try:
+        engine = ReplayEngine()
+    except Exception as e:
+        click.secho(
+            f"ERROR: Configuration error: {e}. "
+            "What to try: check the validity of your configuration file or options.",
+            fg="red",
+        err=True,
+    )
+    sys.exit(1)
     
     all_ok = True
     for path in matched_paths:
