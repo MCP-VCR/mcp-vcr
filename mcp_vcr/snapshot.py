@@ -1,6 +1,5 @@
 import copy
 import click
-import sys
 import yaml
 import logging
 from pathlib import Path
