@@ -3,7 +3,6 @@ import re
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
-from .schema import Direction, Message
 
 def parse_json_path(path_str: str) -> List[str]:
     """Parse JSON path strings (supporting $, ., and [n] notation) into segments."""
@@ -319,7 +318,7 @@ def run_diff(
             
     return changes_by_id
 
-def format_text_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
+def format_text_diff(changes_by_id: Dict[Any, Dict[str, Any]]) -> str:
     """Format changes into human-readable text diff grouping by request ID."""
     lines = []
     for msg_id, group in sorted(changes_by_id.items(), key=lambda kv: _id_sort_key(kv[0])):
@@ -384,7 +383,7 @@ def format_text_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
         return "No changes detected"
     return "\n".join(lines).strip()
 
-def format_json_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
+def format_json_diff(changes_by_id: Dict[Any, Dict[str, Any]]) -> str:
     """Format changes into structured JSON output."""
     flat_changes = []
     added_count = 0
@@ -418,7 +417,7 @@ def format_json_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
     }
     return json.dumps(result, indent=2)
 
-def format_github_diff(changes_by_id: Dict[int, Dict[str, Any]], session_name: str) -> str:
+def format_github_diff(changes_by_id: Dict[Any, Dict[str, Any]], session_name: str) -> str:
     """Format changes into GitHub Actions annotations."""
     lines = []
     for _msg_id, group in sorted(changes_by_id.items(), key=lambda kv: _id_sort_key(kv[0])):
