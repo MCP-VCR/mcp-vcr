@@ -10,7 +10,7 @@ This document describes the internal design of `mcp-vcr`: how the proxy works, h
 2. [Process model](#process-model)
 3. [Transport layer and framing](#transport-layer-and-framing)
 4. [Message interceptor](#message-interceptor)
-5. [Transcript recorder & Schema Versioning](#transcript-recorder-schema-versioning)
+5. [Transcript recorder & Schema Versioning](#transcript-recorder--schema-versioning)
 6. [Replay engine](#replay-engine)
 7. [Diff engine](#diff-engine)
 8. [Redaction layer](#redaction-layer)

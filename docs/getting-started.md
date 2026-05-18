@@ -108,10 +108,10 @@ Run verification checks in your development workflow or local git pre-commit hoo
 mcp-vcr verify snapshots/ -- python /path/to/my_server.py
 ```
 
-This commands spins up your server, replays the snapshot sequence, and checks for structural, field, and type-level regressions. If regressions are found, the command exits with code `1`, preventing buggy deployments!
+This command spins up your server, replays the snapshot sequence, and checks for structural, field, and type-level regressions. If regressions are found, the command exits with code `1`, preventing buggy deployments!
 
 ---
 
 ## Next Steps
-- Explore custom redaction rules in [CI Integration Guide](ci-integration.md).
-- Learn about structural and payload normalization in [Architecture.md](../Architecture.md).
+- Set up automated regression testing in [CI Integration Guide](ci-integration.md).
+- Customize normalizers and redaction rules in [Architecture.md](../Architecture.md).

@@ -75,7 +75,7 @@ def validate_file(file_path: Path, allow_v0: bool = True) -> Transcript:
             class StrictMetadata(BaseModel):
                 version: int = Field(ge=1, le=1, description="Strict version check")
             # This raises standard pydantic.ValidationError for version field
-            StrictMetadata.model_validate(meta)
+        StrictMetadata.model_validate({"version": version})
             
     is_v0 = False
     
