@@ -20,7 +20,8 @@ class Redactor:
     Redactor replaces values of known sensitive fields, patterns, and filesystem paths
     in JSON-RPC payloads before recording them in transcripts.
     """
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, enabled: bool = True):
+        self.enabled = enabled
         self.sensitive_fields: Set[str] = set(DEFAULT_FIELDS)
         self.compiled_patterns: List[re.Pattern] = []
         self.paths_enabled: bool = True
@@ -82,6 +83,8 @@ class Redactor:
         """
         Deeply copy the payload and apply recursive redaction rules.
         """
+        if not self.enabled:
+            return copy.deepcopy(payload)
         copied = copy.deepcopy(payload)
         return self._redact_recursive(copied)
 
