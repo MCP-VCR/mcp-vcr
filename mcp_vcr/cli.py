@@ -354,7 +354,12 @@ def list_sessions(format_type, sessions_dir):
                 "protocol_version": meta.get("protocol_version", ""),
                 "message_count": len(data.get("messages", []))
             })
-        except Exception:
+        except Exception as e:
+            click.secho(
+                f"WARNING: Skipping unreadable session file '{f_path.name}': {e}",
+                fg="yellow",
+                err=True,
+            )
             continue
             
     # Sort newest first by date string
@@ -401,7 +406,12 @@ def inspect(prefix, messages, sessions_dir):
             session_id = meta.get("session_id", "")
             if session_id.startswith(prefix):
                 matches.append((f_path, session_id, data))
-        except Exception:
+        except Exception as e:
+            click.secho(
+                f"WARNING: Skipping unreadable session file '{f_path.name}': {e}",
+                fg="yellow",
+                err=True,
+            )
             continue
             
     if not matches:
