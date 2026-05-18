@@ -35,15 +35,26 @@ class ReplayEngine:
             except Exception as e:
                 logger.warning("Failed to load configuration file %s: %s", self.config_path, e)
         
-        replay_cfg = {}
+        replay_cfg: Dict[str, Any] = {}
         if isinstance(config, dict):
-            replay_cfg = config.get("replay", {})
+            raw_replay_cfg = config.get("replay", {})
+            if isinstance(raw_replay_cfg, dict):
+                replay_cfg = raw_replay_cfg
+            else:
+                logger.warning("Invalid config: 'replay' must be an object; got %s", type(raw_replay_cfg).__name__)
+
+        def _read_non_negative_int(key: str, default: int) -> int:
+            val = replay_cfg.get(key, default)
+            if isinstance(val, int) and val >= 0:
+                return val
+            logger.warning("Invalid replay.%s=%r; using default %d", key, val, default)
+            return default
             
         if self.timeout_ms is None:
-            self.timeout_ms = replay_cfg.get("timeout_ms", 5000)
+            self.timeout_ms = _read_non_negative_int("timeout_ms", 5000)
             
         if self.settle_delay_ms is None:
-            self.settle_delay_ms = replay_cfg.get("settle_delay_ms", 50)
+            self.settle_delay_ms = _read_non_negative_int("settle_delay_ms", 50)
 
     async def run_replay(self, transcript_path: Path, server_args: Optional[List[str]] = None) -> Path:
         """
@@ -163,7 +174,7 @@ class ReplayEngine:
                 pass
                 
         # 7. Write derived replay output transcript
-        timestamp = time.strftime("%Y%m%d")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         new_session_id = f"{transcript.meta.session_id}-replay-{timestamp}"
         
         meta_dict = {
@@ -208,6 +219,6 @@ class ReplayEngine:
         # Quick validation of the output file
         errors = validate_transcript(output_path)
         if errors:
-            logger.warning(f"Generated replay output failed schema validation: {errors}")
+            raise ValueError(f"Generated replay output failed schema validation: {errors}")
             
         return output_path

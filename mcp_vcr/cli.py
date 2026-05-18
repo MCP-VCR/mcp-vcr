@@ -133,7 +133,6 @@ def replay(session, timeout, server_args):
     
     try:
         output_path = asyncio.run(engine.run_replay(session, server_args=args))
-        click.secho(f"Replay completed successfully. Output stored at {output_path}", fg="green")
         
         # Check if the output has incomplete: true in meta
         with open(output_path, "r", encoding="utf-8") as f:
@@ -142,6 +141,8 @@ def replay(session, timeout, server_args):
             reason = data["meta"].get("incomplete_reason", "unknown")
             click.secho(f"ERROR: Replay was incomplete due to: {reason}", fg="red", err=True)
             sys.exit(1)
+        
+        click.secho(f"Replay completed successfully. Output stored at {output_path}", fg="green")
             
     except Exception as e:
         click.secho(f"ERROR: Replay failed: {e}", fg="red", err=True)
