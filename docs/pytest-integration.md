@@ -83,6 +83,7 @@ You can use `mcp-vcr verify` inside the `pytest_sessionfinish` hook to run regre
 # conftest.py
 import pytest
 import subprocess
+import sys
 
 def pytest_sessionfinish(session, exitstatus):
     """
