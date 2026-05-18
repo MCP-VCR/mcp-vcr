@@ -121,7 +121,16 @@ def record(output, name, no_redact, config, server_args):
         sys.exit(1)
         
     # Initialize redactor
-    redactor = Redactor(config_path=config, enabled=not no_redact)
+    try:
+        redactor = Redactor(config_path=config, enabled=not no_redact)
+    except Exception as e:
+        click.secho(
+            f"ERROR: Failed to initialize redaction/config: {e}. "
+            "What to try: validate your --config file or retry with --no-redact.",
+            fg="red",
+            err=True,
+        )
+        sys.exit(1)
     
     # Initialize the streaming TranscriptRecorder and MessageInterceptor
     recorder = TranscriptRecorder(filename=str(filepath), server_command=args)
@@ -427,13 +436,22 @@ def inspect(prefix, messages, sessions_dir):
     f_path, session_id, data = matches[0]
     meta = data.get("meta", {})
     msgs = data.get("messages", [])
+    if not isinstance(msgs, list):
+        click.secho(
+            f"ERROR: Session '{f_path.name}' has invalid 'messages' format (expected a list).",
+            fg="red",
+            err=True,
+        )
+        sys.exit(1)
     
     # Analyze messages
-    c2s_count = sum(1 for m in msgs if m.get("dir") == "c2s")
-    s2c_count = sum(1 for m in msgs if m.get("dir") == "s2c")
+    c2s_count = sum(1 for m in msgs if isinstance(m, dict) and m.get("dir") == "c2s")
+    s2c_count = sum(1 for m in msgs if isinstance(m, dict) and m.get("dir") == "s2c")
     
     methods = set()
     for m in msgs:
+        if not isinstance(m, dict):
+            continue
         payload = m.get("payload")
         if isinstance(payload, dict):
             method = payload.get("method")
@@ -466,6 +484,9 @@ def inspect(prefix, messages, sessions_dir):
         click.echo()
         click.secho("Messages List:", fg="yellow")
         for m in msgs:
+            if not isinstance(m, dict):
+                click.echo("  [   ??? ms] ???   (Malformed message entry)")
+                continue
             t = m.get("t", 0)
             direction = m.get("dir", "???")
             payload = m.get("payload", {})
