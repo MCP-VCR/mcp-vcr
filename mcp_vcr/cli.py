@@ -421,7 +421,7 @@ def inspect(prefix, messages, sessions_dir):
             with open(f_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             meta = data.get("meta", {})
-            session_id = meta.get("session_id", "")
+            session_id = str(meta.get("session_id") or "")
             if session_id.startswith(prefix):
                 matches.append((f_path, session_id, data))
         except Exception as e:
@@ -496,8 +496,13 @@ def inspect(prefix, messages, sessions_dir):
             if not isinstance(m, dict):
                 click.echo("  [   ??? ms] ???   (Malformed message entry)")
                 continue
-            t = m.get("t", 0)
-            direction = m.get("dir", "???")
+            t_raw = m.get("t", 0)
+            try:
+                t = f"{int(t_raw):>6}"
+            except (TypeError, ValueError):
+                t = "   ???"
+            direction_raw = m.get("dir", "???")
+            direction = direction_raw if isinstance(direction_raw, str) else "???"
             payload = m.get("payload", {})
             
             info = ""
@@ -515,7 +520,7 @@ def inspect(prefix, messages, sessions_dir):
                     else:
                         info = f"(Response Success, id={msg_id})"
                         
-            click.echo(f"  [{t:>6} ms] {direction:<5} {info}")
+            click.echo(f"  [{t} ms] {direction:<5} {info}")
 
 @main.command()
 @click.argument('session_yaml', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path))
