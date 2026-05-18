@@ -51,7 +51,7 @@
         },
         "incomplete_reason": {
           "type": "string",
-          "enum": ["timeout", "server_crash", "pipe_error"],
+          "enum": ["timeout", "server_crash", "pipe_error", "malformed_response"],
           "description": "Reason for replay failure."
         }
       }

@@ -16,7 +16,7 @@ class Metadata(BaseModel):
     client_hint: Optional[str] = Field(default=None, description="Inferred client identity")
     schema_version: Optional[str] = Field(default="1.0", description="Schema version for validation")
     incomplete: Optional[bool] = Field(default=None, description="True if the session replay was incomplete")
-    incomplete_reason: Optional[Literal["timeout", "server_crash", "pipe_error"]] = Field(
+    incomplete_reason: Optional[Literal["timeout", "server_crash", "pipe_error", "malformed_response"]] = Field(
         default=None,
         description="Reason for incomplete replay",
     )

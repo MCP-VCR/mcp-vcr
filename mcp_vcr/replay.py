@@ -180,15 +180,15 @@ class ReplayEngine:
                 except json.JSONDecodeError as e:
                     logger.error(f"Malformed JSON response from server during replay: {e}")
                     incomplete = True
-                    incomplete_reason = "server_crash"
+                    incomplete_reason = "malformed_response"
                     break
                     
         # 6. Graceful cleanup of server subprocess
         try:
             process.stdin.close()
             await process.stdin.wait_closed()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Exception during stdin cleanup: %s", e)
             
         try:
             await asyncio.wait_for(process.wait(), timeout=5.0)
@@ -197,8 +197,8 @@ class ReplayEngine:
             try:
                 process.kill()
                 await process.wait()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Exception during process kill: %s", e)
                 
         # 7. Write derived replay output transcript
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

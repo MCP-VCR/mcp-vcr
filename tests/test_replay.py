@@ -31,6 +31,10 @@ for line in sys.stdin:
                 time.sleep(2)
             elif method == "crash":
                 sys.exit(42)
+            elif method == "malformed":
+                sys.stdout.write("not-a-json\\n")
+                sys.stdout.flush()
+                continue
             elif method == "async_notif":
                 notif = {
                     "jsonrpc": "2.0",
@@ -312,4 +316,41 @@ messages:
     assert resp_msg["dir"] == "s2c"
     assert resp_msg["payload"]["id"] == 10
     assert resp_msg["payload"]["result"]["method_echo"] == "async_notif"
+
+@pytest.mark.asyncio
+async def test_replay_malformed_response(tmp_path, dummy_server_path):
+    """Verify that a malformed/non-JSON response from the server is captured as 'malformed_response'."""
+    transcript_yaml = """meta:
+  version: 1
+  recorded_at: "2026-05-18T12:00:00Z"
+  session_id: "abcdef99"
+  server_command: ["python", "dummy.py"]
+  schema_version: "1.0"
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      method: "malformed"
+"""
+    t_path = tmp_path / "session_malformed.yaml"
+    t_path.write_text(transcript_yaml, encoding="utf-8")
+    
+    engine = ReplayEngine()
+    server_args = [sys.executable, str(dummy_server_path)]
+    
+    output_path = await engine.run_replay(t_path, server_args=server_args)
+    
+    assert output_path.exists()
+    errors = validate_transcript(output_path)
+    assert not errors, f"Output transcript failed validation: {errors}"
+    
+    with open(output_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        
+    meta = data["meta"]
+    assert meta["incomplete"] is True
+    assert meta["incomplete_reason"] == "malformed_response"
+
 
