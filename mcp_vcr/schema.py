@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Literal
 from pydantic import BaseModel, Field
 
 class Direction(str, Enum):
@@ -15,6 +15,11 @@ class Metadata(BaseModel):
     protocol_version: Optional[str] = Field(default=None, description="MCP protocol version from initialize result")
     client_hint: Optional[str] = Field(default=None, description="Inferred client identity")
     schema_version: Optional[str] = Field(default="1.0", description="Schema version for validation")
+    incomplete: Optional[bool] = Field(default=None, description="True if the session replay was incomplete")
+    incomplete_reason: Optional[Literal["timeout", "server_crash", "pipe_error", "malformed_response"]] = Field(
+        default=None,
+        description="Reason for incomplete replay",
+    )
 
 class Message(BaseModel):
     t: int = Field(description="Milliseconds since session start")

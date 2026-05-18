@@ -109,5 +109,95 @@ def record(name, server_args):
             
     sys.exit(exit_code)
 
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.argument('session', type=click.Path(exists=True, path_type=Path))
+@click.option('--timeout', type=int, default=None, help="Timeout in milliseconds per request.")
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
+def replay(session, timeout, server_args):
+    """Replay an MCP session against a server subprocess."""
+    args = list(server_args)
+    if args and args[0] == '--':
+        args = args[1:]
+        
+    if not args:
+        click.secho("ERROR: No server command specified.", fg="red", err=True)
+        sys.exit(1)
+        
+    from .replay import ReplayEngine
+    engine = ReplayEngine(timeout_ms=timeout)
+    
+    click.secho(f"Starting replay of {session} against server: {' '.join(args)}", fg="cyan", err=True)
+    
+    try:
+        output_path = asyncio.run(engine.run_replay(session, server_args=args))
+        
+        # Check if the output has incomplete: true in meta
+        with open(output_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if data and isinstance(data, dict) and data.get("meta", {}).get("incomplete"):
+            reason = data["meta"].get("incomplete_reason", "unknown")
+            click.secho(f"ERROR: Replay was incomplete due to: {reason}", fg="red", err=True)
+            sys.exit(1)
+        
+        click.secho(f"Replay completed successfully. Output stored at {output_path}", fg="green")
+            
+    except Exception as e:
+        click.secho(f"ERROR: Replay failed: {e}", fg="red", err=True)
+        sys.exit(1)
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.argument('session_glob', type=str)
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
+def check(session_glob, server_args):
+    """Replay a glob of sessions against a server and exit 1 on regression/failure."""
+    args = list(server_args)
+    if args and args[0] == '--':
+        args = args[1:]
+        
+    if not args:
+        click.secho("ERROR: No server command specified.", fg="red", err=True)
+        sys.exit(1)
+        
+    # Resolve the glob
+    import glob
+    matched_paths = glob.glob(session_glob, recursive=True)
+    if not matched_paths:
+        click.secho(f"No transcripts matched the glob: {session_glob}", fg="yellow", err=True)
+        sys.exit(0)
+        
+    matched_paths = sorted([Path(p) for p in matched_paths if Path(p).is_file()])
+    
+    from .replay import ReplayEngine
+    engine = ReplayEngine()
+    
+    all_ok = True
+    for path in matched_paths:
+        click.secho(f"Checking session: {path.name}", fg="cyan")
+        try:
+            output_path = asyncio.run(engine.run_replay(path, server_args=args))
+            
+            # Check if output transcript has incomplete: true
+            with open(output_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            if data and isinstance(data, dict) and data.get("meta", {}).get("incomplete"):
+                reason = data["meta"].get("incomplete_reason", "unknown")
+                click.secho(f"FAIL: {path.name} failed with incomplete reason: {reason}", fg="red", err=True)
+                all_ok = False
+            else:
+                click.secho(f"PASS: {path.name} replayed successfully", fg="green")
+        except Exception as e:
+            click.secho(f"FAIL: {path.name} failed with exception: {e}", fg="red", err=True)
+            all_ok = False
+            
+    if not all_ok:
+        sys.exit(1)
+    sys.exit(0)
+
 if __name__ == "__main__":
     main()
