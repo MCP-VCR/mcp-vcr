@@ -363,7 +363,7 @@ def list_sessions(format_type, sessions_dir):
             continue
             
     # Sort newest first by date string
-    sessions.sort(key=lambda x: x["date"], reverse=True)
+    sessions.sort(key=lambda x: x["date"] or "", reverse=True)
     
     if format_type == "json":
         import json
