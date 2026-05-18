@@ -245,12 +245,12 @@ def check(session_glob, server_args):
     import glob
     matched_paths = glob.glob(session_glob, recursive=True)
     if not matched_paths:
-        click.secho(f"ERROR: No transcripts matched the glob: {session_glob}. What to try: verify the glob pattern matches existing YAML files.", fg="yellow", err=True)
+        click.secho(f"ERROR: No transcripts matched the glob: {session_glob}. What to try: verify the glob pattern matches existing YAML files.", fg="red", err=True)
         sys.exit(1)
         
     matched_paths = sorted([Path(p) for p in matched_paths if Path(p).is_file()])
     if not matched_paths:
-        click.secho(f"ERROR: No files matched the glob: {session_glob}.", fg="yellow", err=True)
+        click.secho(f"ERROR: No files matched the glob: {session_glob}.", fg="red", err=True)
         sys.exit(1)
         
     from .replay import ReplayEngine
