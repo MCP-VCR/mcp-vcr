@@ -22,11 +22,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Step 3: Install dependencies, including mcp-vcr
+      # Step 3: Install dependencies.
+      # For this repository's CI (or when developing/testing from local source),
+      # we install using 'pip install .'. Once published, external server repos
+      # can replace this with 'pip install mcp-vcr'.
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install mcp-vcr
+          pip install .
 
       # Step 4: Run mcp-vcr verify to replay recorded sessions against the server
       # and diff the replayed, normalized responses against the golden snapshots.
