@@ -236,5 +236,38 @@ def diff(transcript_a, transcript_b, mode, format_type, ignore_fields):
         click.secho(f"ERROR: Diff failed: {e}", fg="red", err=True)
         sys.exit(1)
 
+@main.command()
+@click.argument('session_yaml', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path))
+def snapshot(session_yaml):
+    """Create a normalized golden snapshot from a recorded or replayed transcript."""
+    from .snapshot import run_snapshot
+    try:
+        golden_path = run_snapshot(session_yaml)
+        click.secho(f"Golden snapshot created: {golden_path}", fg="green")
+    except Exception as e:
+        click.secho(f"ERROR: Failed to create snapshot: {e}", fg="red", err=True)
+        sys.exit(1)
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
+@click.argument('snapshots_dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path))
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
+def verify(update, snapshots_dir, server_args):
+    """Replay a server against its golden snapshots and report regressions."""
+    args = list(server_args)
+    if args and args[0] == '--':
+        args = args[1:]
+        
+    from .snapshot import run_verify
+    try:
+        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update))
+    except Exception as e:
+        click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
+        sys.exit(1)
+    sys.exit(exit_code)
+
 if __name__ == "__main__":
     main()
