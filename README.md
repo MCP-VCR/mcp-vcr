@@ -147,6 +147,32 @@ Plug directly into CI:
   run: mcp-vcr check sessions/*.yaml -- python my_server.py
 ```
 
+For integrating regression tests with `pytest`, see the [Pytest Integration Guide](docs/pytest-integration.md).
+
+---
+
+## Golden Snapshots
+
+To establish stable contract baselines (ignoring timestamps, UUIDs, request IDs, and cursors), use the golden snapshot workflow:
+
+```bash
+mcp-vcr snapshot sessions/my_session.yaml
+# Generates normalized golden file: snapshots/my_session_golden.yaml
+```
+
+To verify regressions against all golden snapshots (e.g. in CI):
+```bash
+mcp-vcr verify snapshots/ -- python my_server.py
+```
+
+To intentionally overwrite goldens when making server changes:
+```bash
+mcp-vcr verify --update snapshots/ -- python my_server.py
+```
+
+> [!IMPORTANT]
+> The `snapshots/` directory contains normalized, stable, and redacted regression baselines. It **should be committed to git** (unlike the `sessions/` directory, which is gitignored).
+
 ---
 
 ## Claude Desktop integration
