@@ -91,7 +91,10 @@ async def run_verify(
 ) -> int:
     """Replay sessions against a server, diff normalized results vs golden snapshots, and report regressions or update goldens."""
     p_snapshots = Path(snapshots_dir)
-    
+    if not p_snapshots.exists() or not p_snapshots.is_dir():
+        click.secho(f"No golden snapshots found in '{snapshots_dir}'", fg="yellow")
+        return 0
+        
     golden_files = sorted(list(p_snapshots.glob("*_golden.yaml")) + list(p_snapshots.glob("*_golden.yml")))
     if not golden_files:
         click.secho(f"No golden snapshots found in '{snapshots_dir}'", fg="yellow")

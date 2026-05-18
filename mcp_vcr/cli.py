@@ -253,7 +253,7 @@ def snapshot(session_yaml):
     allow_extra_args=True,
 ))
 @click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
-@click.argument('snapshots_dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
+@click.argument('snapshots_dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path))
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
 def verify(update, snapshots_dir, server_args):
     """Replay a server against its golden snapshots and report regressions."""
