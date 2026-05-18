@@ -199,5 +199,42 @@ def check(session_glob, server_args):
         sys.exit(1)
     sys.exit(0)
 
+@main.command()
+@click.argument('transcript_a', type=click.Path(exists=True, path_type=Path))
+@click.argument('transcript_b', type=click.Path(exists=True, path_type=Path))
+@click.option('--mode', type=click.Choice(['structural', 'semantic', 'strict']), default='structural', help="Diff mode (default: structural).")
+@click.option('--format', 'format_type', type=click.Choice(['text', 'json', 'github']), default='text', help="Output format (default: text).")
+@click.option('--ignore-fields', type=str, default=None, help="Comma-separated JSON paths to exclude from comparison.")
+def diff(transcript_a, transcript_b, mode, format_type, ignore_fields):
+    """Compare two session transcripts and output differences."""
+    from .diff import run_diff, format_text_diff, format_json_diff, format_github_diff
+    
+    ignore_list = None
+    if ignore_fields:
+        ignore_list = [p.strip() for p in ignore_fields.split(",") if p.strip()]
+        
+    try:
+        changes_by_id = run_diff(transcript_a, transcript_b, mode=mode, ignore_fields=ignore_list)
+        
+        has_changes = any(group["changes"] for group in changes_by_id.values())
+        
+        if format_type == "json":
+            output = format_json_diff(changes_by_id)
+            click.echo(output)
+        elif format_type == "github":
+            output = format_github_diff(changes_by_id, transcript_b.name)
+            if output:
+                click.echo(output)
+        else:
+            output = format_text_diff(changes_by_id)
+            click.echo(output)
+            
+        if has_changes:
+            sys.exit(1)
+        sys.exit(0)
+    except Exception as e:
+        click.secho(f"ERROR: Diff failed: {e}", fg="red", err=True)
+        sys.exit(1)
+
 if __name__ == "__main__":
     main()
