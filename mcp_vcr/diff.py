@@ -1,6 +1,5 @@
 import json
 import re
-import time
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
@@ -208,7 +207,7 @@ def run_diff(
     transcript_b_path: Path,
     mode: str = "structural",
     ignore_fields: Optional[List[str]] = None
-) -> Dict[int, Dict[str, Any]]:
+) -> Dict[Any, Dict[str, Any]]:
     """Compare two session transcripts and return differences grouped by request ID."""
     allowed_modes = {"structural", "semantic", "strict"}
     if mode not in allowed_modes:
@@ -422,7 +421,7 @@ def format_json_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
 def format_github_diff(changes_by_id: Dict[int, Dict[str, Any]], session_name: str) -> str:
     """Format changes into GitHub Actions annotations."""
     lines = []
-    for msg_id, group in sorted(changes_by_id.items()):
+    for _msg_id, group in sorted(changes_by_id.items(), key=lambda kv: _id_sort_key(kv[0])):
         method = group["method"]
         for change in group["changes"]:
             path = change["path"]
