@@ -10,13 +10,14 @@ This document describes the internal design of `mcp-vcr`: how the proxy works, h
 2. [Process model](#process-model)
 3. [Transport layer and framing](#transport-layer-and-framing)
 4. [Message interceptor](#message-interceptor)
-5. [Transcript recorder](#transcript-recorder)
+5. [Transcript recorder & Schema Versioning](#transcript-recorder--schema-versioning)
 6. [Replay engine](#replay-engine)
 7. [Diff engine](#diff-engine)
 8. [Redaction layer](#redaction-layer)
-9. [Session identity and naming](#session-identity-and-naming)
-10. [Error handling and failure modes](#error-handling-and-failure-modes)
-11. [Future work](#future-work)
+9. [Normalization Chain](#normalization-chain)
+10. [Session identity and naming](#session-identity-and-naming)
+11. [Error handling and failure modes](#error-handling-and-failure-modes)
+12. [Future work](#future-work)
 
 ---
 
@@ -200,7 +201,7 @@ The `asyncio.create_task` call is important — transcript writing must not bloc
 
 ---
 
-## Transcript recorder
+## Transcript recorder & Schema Versioning
 
 The recorder serializes `InterceptedMessage` objects to YAML and writes them to disk.
 
@@ -219,11 +220,13 @@ The recorder serializes `InterceptedMessage` objects to YAML and writes them to 
 
 ```yaml
 meta:
+  version: 1                                  # Transcript format version
   recorded_at: "2024-01-15T14:30:22.471Z"   # ISO 8601 UTC
   session_id: "a3f2b1c9"                      # 8-char hex, random
   server_command: ["python", "my_server.py"]
   protocol_version: "2024-11-05"              # from initialize result
   client_hint: "claude-desktop"               # inferred from clientInfo.name
+  schema_version: "1.0"
 
 messages:
   - t: 0
@@ -243,6 +246,13 @@ messages:
 ```
 
 `meta.protocol_version` and `meta.client_hint` are populated lazily — the recorder inspects the `initialize` exchange after the fact and backfills these fields before closing the file.
+
+### Schema Versioning & Backward Compatibility
+
+To maintain long-term usability of transcript test suites:
+- **Strict v1 Schema Validation**: The `validate` CLI subcommand enforces strict conformance against the v1 JSON Schema. New recordings are marked with `meta.version: 1`.
+- **Legacy v0 Support**: Transcripts lacking a version or marked with `version: 0` are treated as legacy transcripts. When loaded for replay, diff, or snapshot creation, they trigger a deprecation warning, automatically backfill missing metadata fields, and proceed successfully.
+- **Strict Checking on Demand**: In pipeline checks and schema validation tests, the parser exposes a strict mode (`allow_v0=False`) that rejects legacy structures to ensure golden transcripts remain clean and modern.
 
 ### File naming
 
@@ -405,6 +415,40 @@ Redacted transcripts cannot be "unredacted" — that's the point. If a transcrip
 ### Redaction in replay
 
 When replaying a redacted transcript, the `<REDACTED_*>` placeholders are sent as-is to the server. This means replay against a server that validates credentials will fail. This is expected behavior — replay is for testing server logic, not authenticated end-to-end flows. For authenticated replay, users should use `--no-redact` during recording and manage the transcript as a secret.
+
+---
+
+## Normalization Chain
+
+The normalization layer strips transcripts of non-deterministic, session-specific data to create reproducible, byte-identical "golden snapshots". This allows you to verify that server code changes did not cause regressions, without test suite noise.
+
+### Composing without Mutation
+
+To ensure thread safety and predictability, all normalizers operate recursively on deep copies of message payloads. The pipeline implements a composable protocol with a list of discrete steps, avoiding in-place mutations.
+
+### Sequential Normalizers
+
+MCP-VCR features five standard sequential normalizers:
+
+1. **Timestamp Normalizer (`timestamps`)**: Regex-detects ISO 8601 strings in any leaf values and replaces them with `"NORM_TIMESTAMP"`.
+2. **Request ID Normalizer (`request_ids`)**: Tracks JSON-RPC request and response `id` fields (integers or strings) dynamically, mapping them to stable sequential counters (`"NORM_ID_1"`, `"NORM_ID_2"`, ...).
+3. **UUID Normalizer (`uuids`)**: Identifies standard random UUID v4 values within string payloads and replaces them with stable identifiers (`"NORM_UUID_1"`, `"NORM_UUID_2"`, ...).
+4. **Cursor Normalizer (`cursors`)**: Scans for cursor fields (e.g., `cursor`, `nextCursor`, `pageToken`, `continuationToken`) and replaces dynamic pagination tokens with `"NORM_CURSOR"`.
+5. **Path Normalizer (`paths`)**: Identifies absolute filesystem paths and normalizes them to prevent absolute local paths from breaking tests in other developer machines or CI environments.
+
+### Toggle Configuration
+
+You can fully customize which normalizers are active by configuring your project's `.mcp-vcr.yaml` file:
+
+```yaml
+normalize:
+  timestamps: true
+  request_ids: true
+  uuids: true
+  cursors: true
+```
+
+If a configuration key is omitted or invalid, normalizers default to enabled, ensuring robust and high-quality regression detection out of the box.
 
 ---
 

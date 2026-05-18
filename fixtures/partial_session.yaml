@@ -1,0 +1,36 @@
+meta:
+  version: 1
+  recorded_at: "2026-05-18T10:20:00.000Z"
+  session_id: "e7f0a1b2"
+  server_command: ["python", "server.py"]
+  protocol_version: "2024-11-05"
+  client_hint: "claude-desktop"
+  schema_version: "1.0"
+
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      method: initialize
+      params:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        clientInfo:
+          name: "claude-desktop"
+          version: "1.0.0"
+
+  - t: 25
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      result:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        serverInfo:
+          name: "partial-server"
+          version: "0.1.0"
+          
+  # Abruptly ended without initialized notification or any tools/list or clean exit!

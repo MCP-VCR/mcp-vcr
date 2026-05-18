@@ -1,0 +1,51 @@
+meta:
+  version: 1
+  recorded_at: "2026-05-18T10:15:00.000Z"
+  session_id: "d6c9e5f2"
+  server_command: ["python", "server.py"]
+  protocol_version: "2024-11-05"
+  client_hint: "claude-desktop"
+  schema_version: "1.0"
+
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      method: initialize
+      params:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        clientInfo:
+          name: "claude-desktop"
+          version: "1.0.0"
+
+  - t: 20
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      result:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        serverInfo:
+          name: "error-server"
+          version: "0.1.0"
+
+  - t: 30
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 2
+      method: non_existent_method
+      params: {}
+
+  - t: 45
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 2
+      error:
+        code: -32601
+        message: "Method not found"

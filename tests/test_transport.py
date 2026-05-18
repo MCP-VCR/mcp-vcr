@@ -236,3 +236,92 @@ async def test_run_proxy_signal_forwarding():
                 mock_process.wait.assert_called()
                 # Exit code matches subprocess
                 assert exit_code == 42
+
+
+@pytest.mark.asyncio
+async def test_launch_server_empty_args():
+    """Verify that launching server with empty arguments list raises ValueError."""
+    with pytest.raises(ValueError) as excinfo:
+        await launch_server([])
+    assert "Server arguments list cannot be empty" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_pump_interceptor_error(caplog):
+    """Verify that if the message interceptor raises an exception, the pump logs it and continues gracefully."""
+    reader = asyncio.StreamReader()
+    msg = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    line = json.dumps(msg).encode() + b"\n"
+    reader.feed_data(line)
+    reader.feed_eof()
+
+    writer = MockStreamWriter()
+    
+    interceptor = MagicMock(spec=MessageInterceptor)
+    interceptor.observe.side_effect = RuntimeError("Interceptor crash simulation")
+
+    # The c2s pump must handle the exception, log an error, and still forward the line!
+    with caplog.at_level(logging.ERROR):
+        await pump_c2s(reader, writer, interceptor)
+
+    # Line was successfully forwarded
+    assert writer.write_buf == line
+    # Logged the crash
+    assert any("Error in c2s interceptor call" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_stream_writer_wrapper():
+    """Verify StreamWriterWrapper exposes write and drain methods correctly."""
+    mock_raw = MagicMock()
+    wrapper = StreamWriterWrapper(mock_raw)
+    
+    wrapper.write(b"data\n")
+    mock_raw.write.assert_called_once_with(b"data\n")
+    
+    await wrapper.drain()
+    mock_raw.flush.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_proxy_flush_errors(caplog):
+    """Verify that run_proxy handles interceptor/recorder flush exceptions gracefully."""
+    mock_process = AsyncMock(spec=asyncio.subprocess.Process)
+    mock_process.stdin = MagicMock()
+    mock_process.stdout = asyncio.StreamReader()
+    mock_process.stderr = asyncio.StreamReader()
+    mock_process.wait = AsyncMock(return_value=0)
+
+    # Immediately feed EOF
+    mock_stdin_reader = asyncio.StreamReader()
+    mock_stdin_reader.feed_eof()
+    mock_process.stdout.feed_eof()
+    mock_process.stderr.feed_eof()
+
+    mock_interceptor = MagicMock(spec=MessageInterceptor)
+    mock_interceptor.flush.side_effect = Exception("Interceptor flush crash")
+    
+    mock_recorder = MagicMock()
+    mock_recorder.flush.side_effect = Exception("Recorder flush crash")
+
+    with patch("mcp_vcr.transport.launch_server", new_callable=AsyncMock) as mock_launch, \
+         patch("mcp_vcr.transport.get_stdin_reader", new_callable=AsyncMock) as mock_get_stdin, \
+         patch("sys.stdout", MagicMock()), \
+         patch("sys.stderr", MagicMock()), \
+         caplog.at_level(logging.ERROR):
+         
+        mock_launch.return_value = mock_process
+        mock_get_stdin.return_value = mock_stdin_reader
+
+        exit_code = await run_proxy(
+            ["python", "server.py"],
+            interceptor=mock_interceptor,
+            recorder=mock_recorder
+        )
+        
+        # Must return exit code cleanly
+        assert exit_code == 0
+        
+        # Verify flush exceptions were logged
+        assert any("Error flushing interceptor: Interceptor flush crash" in record.message for record in caplog.records)
+        assert any("Error flushing recorder: Recorder flush crash" in record.message for record in caplog.records)

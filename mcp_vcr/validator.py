@@ -48,7 +48,7 @@ def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
         errors.append({"loc": ("file",), "msg": f"File error: {e}"})
     return errors
 
-def validate_file(file_path: Path) -> Transcript:
+def validate_file(file_path: Path, allow_v0: bool = True) -> Transcript:
     """
     Validate a file against the transcript schema. 
     Raises pydantic.ValidationError if any issues are found.
@@ -60,6 +60,52 @@ def validate_file(file_path: Path) -> Transcript:
     if data is None:
         raise ValueError("Transcript is empty or invalid YAML")
         
+    if not isinstance(data, dict):
+        raise ValueError("Transcript top-level structure must be a dictionary")
+        
+    meta = data.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        raise ValueError("Metadata must be a dictionary")
+        
+    version = meta.get("version")
+    
+    if not allow_v0:
+        if version is None or version == 0:
+            from pydantic import BaseModel, Field
+            class StrictMetadata(BaseModel):
+                version: int = Field(ge=1, le=1, description="Strict version check")
+            # This raises standard pydantic.ValidationError for version field
+            StrictMetadata.model_validate({"version": version})
+            
+    is_v0 = False
+    
+    import logging
+    logger = logging.getLogger("mcp-vcr.validator")
+    
+    if version is None:
+        is_v0 = True
+        meta["version"] = 0
+        logger.warning(
+            f"Transcript at {file_path} is missing 'version' field. Treating as legacy v0 transcript."
+        )
+    elif version == 0:
+        is_v0 = True
+        logger.warning(
+            f"Transcript at {file_path} has legacy version 0. Treating as legacy v0 transcript."
+        )
+        
+    if is_v0:
+        # Backfill required fields if missing to ensure successful parsing as legacy v0
+        if "recorded_at" not in meta:
+            from datetime import datetime, timezone
+            meta["recorded_at"] = datetime.now(timezone.utc).isoformat()
+        if "session_id" not in meta:
+            meta["session_id"] = "00000000"
+        if "server_command" not in meta:
+            meta["server_command"] = ["python", "server.py"]
+        if "schema_version" not in meta:
+            meta["schema_version"] = "0.1"
+            
     # Model validate will raise standard pydantic.ValidationError on failure
     # and return the parsed Transcript on success.
     return Transcript.model_validate(data)

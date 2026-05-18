@@ -211,3 +211,70 @@ def test_config_defaults(tmp_path):
     chain_default = NormalizerChain.from_config(config_path=non_existent)
     active_names_default = {norm.name for norm in chain_default.normalizers}
     assert active_names_default == {"timestamps", "request_ids", "uuids", "cursors"}
+
+def test_normalizer_edge_cases():
+    """Verify normalizers handle empty, primitive, nested, and non-matching payloads gracefully."""
+    chain = NormalizerChain([
+        TimestampNormalizer(),
+        RequestIdNormalizer(),
+        UuidNormalizer(),
+        CursorNormalizer()
+    ])
+    
+    # 1. Empty payloads and primitives
+    assert chain.apply({}) == {}
+    assert chain.apply([]) == []
+    assert chain.apply("just text") == "just text"
+    assert chain.apply(12345) == 12345
+    assert chain.apply(None) is None
+    assert chain.apply(True) is True
+    
+    # 2. Nested empty structures and non-matching fields
+    payload = {
+        "empty_dict": {},
+        "empty_list": [],
+        "non_matching": {
+            "foo": "bar",
+            "number": 42,
+            "null_field": None
+        },
+        "nested_empty_list": [{}, [], {"no_match": 100}]
+    }
+    
+    expected = {
+        "empty_dict": {},
+        "empty_list": [],
+        "non_matching": {
+            "foo": "bar",
+            "number": 42,
+            "null_field": None
+        },
+        "nested_empty_list": [{}, [], {"no_match": 100}]
+    }
+    
+    assert chain.apply(payload) == expected
+
+def test_config_invalid_boolean(tmp_path, caplog):
+    """Verify invalid boolean values log warnings and default to enabled."""
+    config_data = {
+        "normalize": {
+            "timestamps": "not-a-boolean",
+            "uuids": 12345
+        }
+    }
+    
+    config_file = tmp_path / ".mcp-vcr.yaml"
+    with open(config_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(config_data, f)
+        
+    with caplog.at_level(logging.WARNING):
+        chain = NormalizerChain.from_config(config_path=config_file)
+        
+    # Check warning was logged twice
+    warnings = [record.message for record in caplog.records if "Invalid boolean for normalize" in record.message]
+    assert len(warnings) == 2
+    
+    # Ensure they defaulted to enabled
+    active_names = {norm.name for norm in chain.normalizers}
+    assert "timestamps" in active_names
+    assert "uuids" in active_names
