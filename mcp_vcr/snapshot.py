@@ -2,12 +2,16 @@ import copy
 import click
 import sys
 import yaml
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from .normalizer import NormalizerChain
 from .replay import ReplayEngine
 from .diff import run_diff, format_text_diff
 from .validator import validate_file
+import traceback
+
+logger = logging.getLogger("mcp-vcr.snapshot")
 
 def normalize_transcript_data(data: Dict[str, Any], chain: Optional[NormalizerChain] = None) -> Dict[str, Any]:
     """Recursively deep-copies and applies the NormalizerChain to all message payloads in a transcript."""
@@ -22,8 +26,8 @@ def normalize_transcript_data(data: Dict[str, Any], chain: Optional[NormalizerCh
             
     return normalized
 
-def find_source_session(golden_path: Path) -> Path:
-    """Heuristically locate the original session transcript file. Fallback to the golden snapshot itself."""
+def find_source_session(golden_path: Path) -> Optional[Path]:
+    """Heuristically locate the original session transcript file."""
     golden_name = golden_path.stem
     if golden_name.endswith("_golden"):
         base_name = golden_name[:-7]
@@ -44,8 +48,9 @@ def find_source_session(golden_path: Path) -> Path:
                 if p.stem.endswith(f"_{base_name}") or p.stem == base_name:
                     return p
                     
-    # Fallback to the golden snapshot file itself
-    return golden_path
+    # Fallback to None with a warning log referencing the golden_path symbol
+    logger.warning("Could not find source session transcript for golden snapshot: %s", golden_path)
+    return None
 
 def run_snapshot(session_yaml_path: Path) -> Path:
     """Apply normalizer chain and write golden snapshot to snapshots/ directory."""
@@ -103,6 +108,10 @@ async def run_verify(
     
     for golden_path in golden_files:
         source_path = find_source_session(golden_path)
+        if source_path is None:
+            click.secho(f"WARNING: Source session for {golden_path.name} not found in sessions/. Replaying golden snapshot itself as fallback.", fg="yellow")
+            source_path = golden_path
+            
         click.secho(f"Verifying snapshot: {golden_path.name} (source: {source_path.name})", fg="cyan")
         
         try:
@@ -151,7 +160,8 @@ async def run_verify(
                     passed_count += 1
                     
         except Exception as e:
-            results[golden_path] = ("fail", f"Verification encountered an error: {e}", None)
+            tb = traceback.format_exc()
+            results[golden_path] = ("fail", f"Verification encountered an error: {e}", tb)
             failed_count += 1
             
     # Print results and summary

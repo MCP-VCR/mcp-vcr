@@ -223,9 +223,71 @@ async def test_regression_testing_pass_fail_update(regression_server_setup, tmp_
         updated_data = yaml.safe_load(f)
     
     messages = updated_data["messages"]
-    tools_response = [m for m in messages if m["dir"] == "s2c" and m["payload"].get("id") == "NORM_ID_2"][0]
+    tools_response = next(
+        (
+            m for m in messages
+            if m.get("dir") == "s2c"
+            and "tools" in m.get("payload", {}).get("result", {})
+        ),
+        None,
+    )
+    assert tools_response is not None, "Expected tools/list server response in updated snapshot"
     assert tools_response["payload"]["result"]["tools"][0]["name"] == "toolB"
     
     # 4. Verification Pass again (since snapshot now matches)
     exit_pass_2 = await run_verify(snapshots_dir, server_args=[sys.executable, str(server_path)])
     assert exit_pass_2 == 0
+
+@pytest.mark.asyncio
+async def test_run_verify_missing_source_fallback(regression_server_setup, tmp_path):
+    """Verify that verify mode falls back to replaying the golden itself when original source is missing."""
+    server_path, _ = regression_server_setup
+    
+    # We do NOT create anything in sessions/
+    # Instead, we directly create the golden snapshot in snapshots/
+    snapshots_dir = tmp_path / "snapshots"
+    snapshots_dir.mkdir()
+    
+    transcript_data = {
+        "meta": {
+            "version": 1,
+            "recorded_at": "2026-05-18T12:00:00Z",
+            "session_id": "abcdef12",
+            "server_command": [sys.executable, str(server_path)],
+            "schema_version": "1.0"
+        },
+        "messages": [
+            {"t": 0, "dir": "c2s", "payload": {"jsonrpc": "2.0", "id": 1, "method": "initialize"}},
+            {"t": 10, "dir": "s2c", "payload": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "test-server", "version": "1.0.0"}
+                }
+            }},
+            {"t": 20, "dir": "c2s", "payload": {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}},
+            {"t": 30, "dir": "s2c", "payload": {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "tools": [{"name": "toolA", "description": "A tool"}]
+                }
+            }}
+        ]
+    }
+    
+    golden_path = snapshots_dir / "my_session_golden.yaml"
+    normalized_data = normalize_transcript_data(transcript_data)
+    with open(golden_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(normalized_data, f)
+        
+    # Verify that find_source_session indeed returns None because sessions/ is empty
+    source = find_source_session(golden_path)
+    assert source is None
+    
+    # Run verify and ensure it gracefully falls back, replays successfully, and passes (exit code 0)
+    exit_code = await run_verify(snapshots_dir, server_args=[sys.executable, str(server_path)])
+    assert exit_code == 0
+

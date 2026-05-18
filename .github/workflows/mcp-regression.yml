@@ -37,5 +37,6 @@ jobs:
       # Note: To intentionally update snapshots after modifying your server, run:
       #   mcp-vcr verify --update snapshots/ -- python server.py
       # locally, then commit the changed *_golden.yaml files to git.
+      # Replace "python server.py" below with your actual server command.
       - name: Verify Golden Snapshots
         run: mcp-vcr verify snapshots/ -- python server.py
