@@ -80,6 +80,9 @@ def format_value(val: Any) -> str:
         return json.dumps(val, sort_keys=True)
     return str(val)
 
+def _id_sort_key(v: Any) -> tuple[str, str]:
+    return (type(v).__name__, str(v))
+
 def compare_payloads(
     a: Any,
     b: Any,
@@ -252,9 +255,12 @@ def run_diff(
     if ignore_fields:
         for f_path in ignore_fields:
             ignore_paths.append(parse_json_path(f_path))
+    
+    if mode == "strict" and ignore_paths:
+        raise ValueError("ignore_fields is not supported in strict mode")
             
     # Pair by matching ID values
-    all_ids = sorted(list(set(responses_a.keys()) | set(responses_b.keys())))
+    all_ids = sorted(set(responses_a.keys()) | set(responses_b.keys()), key=_id_sort_key)
     changes_by_id = {}
     
     for msg_id in all_ids:
@@ -312,7 +318,7 @@ def run_diff(
 def format_text_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
     """Format changes into human-readable text diff grouping by request ID."""
     lines = []
-    for msg_id, group in sorted(changes_by_id.items()):
+    for msg_id, group in sorted(changes_by_id.items(), key=lambda kv: _id_sort_key(kv[0])):
         method = group["method"]
         group_changes = group["changes"]
         if not group_changes:
@@ -381,7 +387,7 @@ def format_json_diff(changes_by_id: Dict[int, Dict[str, Any]]) -> str:
     removed_count = 0
     changed_count = 0
     
-    for msg_id, group in sorted(changes_by_id.items()):
+    for msg_id, group in sorted(changes_by_id.items(), key=lambda kv: _id_sort_key(kv[0])):
         method = group["method"]
         for change in group["changes"]:
             flat_changes.append({
