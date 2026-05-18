@@ -366,10 +366,10 @@ def list_sessions(format_type, sessions_dir):
                 data = yaml.safe_load(f) or {}
             meta = data.get("meta", {})
             sessions.append({
-                "date": meta.get("recorded_at", ""),
-                "session_id": meta.get("session_id", ""),
-                "client_hint": meta.get("client_hint", ""),
-                "protocol_version": meta.get("protocol_version", ""),
+                "date": str(meta.get("recorded_at") or ""),
+                "session_id": str(meta.get("session_id") or ""),
+                "client_hint": str(meta.get("client_hint") or ""),
+                "protocol_version": str(meta.get("protocol_version") or ""),
                 "message_count": len(data.get("messages", []))
             })
         except Exception as e:
