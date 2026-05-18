@@ -152,8 +152,15 @@ async def run_verify(
             if update:
                 if has_changes:
                     # Overwrite golden file
-                    with open(golden_path, "w", encoding="utf-8") as f:
+                    temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
+                    with open(temp_path, "w", encoding="utf-8") as f:
                         yaml.safe_dump(normalized_replay_data, f, sort_keys=True, default_flow_style=False)
+                    try:
+                        validate_file(temp_path)
+                    except Exception:
+                        temp_path.unlink(missing_ok=True)
+                        raise
+                    temp_path.replace(golden_path)
                     results[golden_path] = ("updated", "Golden snapshot updated with new replayed responses", None)
                     updated_count += 1
                 else:
