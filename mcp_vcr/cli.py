@@ -237,7 +237,7 @@ def diff(transcript_a, transcript_b, mode, format_type, ignore_fields):
         sys.exit(1)
 
 @main.command()
-@click.argument('session_yaml', type=click.Path(exists=True, path_type=Path))
+@click.argument('session_yaml', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path))
 def snapshot(session_yaml):
     """Create a normalized golden snapshot from a recorded or replayed transcript."""
     from .snapshot import run_snapshot
@@ -253,7 +253,7 @@ def snapshot(session_yaml):
     allow_extra_args=True,
 ))
 @click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
-@click.argument('snapshots_dir', type=click.Path(exists=True, path_type=Path))
+@click.argument('snapshots_dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
 def verify(update, snapshots_dir, server_args):
     """Replay a server against its golden snapshots and report regressions."""
@@ -266,7 +266,11 @@ def verify(update, snapshots_dir, server_args):
         sys.exit(1)
         
     from .snapshot import run_verify
-    exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args, update=update))
+    try:
+        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args, update=update))
+    except Exception as e:
+        click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
+        sys.exit(1)
     sys.exit(exit_code)
 
 if __name__ == "__main__":

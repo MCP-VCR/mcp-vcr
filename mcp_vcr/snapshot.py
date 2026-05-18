@@ -169,6 +169,9 @@ async def run_verify(
                 click.echo(detail, err=True)
                 
     if update:
+        if failed_count > 0:
+            click.secho(f"\n{failed_count} snapshots failed during update. {updated_count} updated, {unchanged_count} unchanged.", fg="red", err=True)
+            return 1
         click.secho(f"\nAll snapshots processed in update mode. {updated_count} updated, {unchanged_count} unchanged.", fg="green")
         return 0
     else:

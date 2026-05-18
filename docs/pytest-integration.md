@@ -99,5 +99,6 @@ def pytest_sessionfinish(session, exitstatus):
         result = subprocess.run(cmd, capture_output=True, text=True)
         print(result.stdout)
         if result.returncode != 0:
-            pytest.fail(f"Golden snapshots verification failed:\n{result.stderr}")
+            print(f"ERROR: Golden snapshots verification failed:\n{result.stderr}", file=sys.stderr)
+            session.exitstatus = 1
 ```
