@@ -254,20 +254,16 @@ def snapshot(session_yaml):
 ))
 @click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
 @click.argument('snapshots_dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path))
-@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
 def verify(update, snapshots_dir, server_args):
     """Replay a server against its golden snapshots and report regressions."""
     args = list(server_args)
     if args and args[0] == '--':
         args = args[1:]
         
-    if not args:
-        click.secho("ERROR: No server command specified.", fg="red", err=True)
-        sys.exit(1)
-        
     from .snapshot import run_verify
     try:
-        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args, update=update))
+        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update))
     except Exception as e:
         click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
         sys.exit(1)

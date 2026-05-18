@@ -34,15 +34,15 @@ def find_source_session(golden_path: Path) -> Optional[Path]:
     else:
         base_name = golden_name
         
-    sessions_dir = Path("sessions")
-    if sessions_dir.exists() and sessions_dir.is_dir():
-        # 1. Check exact match: sessions/base_name.yaml or .yml
+    for sessions_dir in (golden_path.parent.parent / "sessions", Path("sessions")):
+        if not sessions_dir.exists() or not sessions_dir.is_dir():
+            continue
+
         for ext in (".yaml", ".yml"):
             p = sessions_dir / f"{base_name}{ext}"
             if p.exists():
                 return p
-                
-        # 2. Check prefix/suffix matches
+
         for p in sessions_dir.glob("*"):
             if p.is_file() and p.suffix in (".yaml", ".yml"):
                 if p.stem.endswith(f"_{base_name}") or p.stem == base_name:

@@ -38,8 +38,11 @@ def main():
                     }
                 sys.stdout.write(json.dumps(resp) + "\n")
                 sys.stdout.flush()
-        except Exception as e:
-            sys.stderr.write(f"Error in server: {e}\n")
+        except json.JSONDecodeError as e:
+            sys.stderr.write(f"Invalid JSON input: {e}\n")
+            sys.stderr.flush()
+        except (IOError, OSError) as e:
+            sys.stderr.write(f"I/O error: {e}\n")
             sys.stderr.flush()
 
 if __name__ == "__main__":
