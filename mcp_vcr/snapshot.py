@@ -45,7 +45,12 @@ def find_source_session(golden_path: Path) -> Optional[Path]:
 
         for p in sessions_dir.glob("*"):
             if p.is_file() and p.suffix in (".yaml", ".yml"):
-                if p.stem.endswith(f"_{base_name}") or p.stem == base_name:
+                candidate = p.stem
+                if candidate.startswith("session_"):
+                    candidate = candidate[len("session_"):]
+                if "-replay-" in candidate:
+                    candidate = candidate.split("-replay-", 1)[0]
+                if candidate == base_name or candidate.endswith(f"_{base_name}"):
                     return p
                     
     # Fallback to None with a warning log referencing the golden_path symbol
@@ -72,7 +77,10 @@ def run_snapshot(session_yaml_path: Path) -> Path:
         name = stem
         if "-replay-" in name:
             name = name.split("-replay-")[0]
-            
+
+    if Path(name).name != name or name in {"", ".", ".."}:
+        raise click.ClickException(f"Invalid snapshot name derived from session: {name!r}")
+
     golden_path = snapshots_dir / f"{name}_golden.yaml"
     
     # Write full, deterministic transcript with stable key ordering
