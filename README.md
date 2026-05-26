@@ -1,4 +1,4 @@
-# MCP-VCR 📼
+# MCP-VCR 
 
 **Record and replay stdio MCP server conversations. Catch regressions in CI before your users do.**
 
