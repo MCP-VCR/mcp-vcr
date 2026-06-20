@@ -167,7 +167,7 @@ async def run_verify(
                         if msg.get("dir") == "c2s":
                             merged_messages.append(msg)
                             
-                    merged_messages.extend(normalized_replay_data.get("messages", []))
+                    merged_messages.extend([m for m in normalized_replay_data.get("messages", []) if m.get("dir") == "s2c"])
                     merged_messages.sort(key=lambda x: x.get("t", 0))
                     
                     new_golden_data = copy.deepcopy(normalized_replay_data)

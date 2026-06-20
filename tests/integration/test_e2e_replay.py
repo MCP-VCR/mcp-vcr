@@ -34,7 +34,8 @@ def test_replay_correctness(tmp_path):
     
     # 2. Verify against the baseline (should pass)
     update_cmd = ["uv", "run", "mcp-vcr", "verify", "--update", str(tmp_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    subprocess.run(update_cmd, text=True, capture_output=True, timeout=10)
+    upd_proc = subprocess.run(update_cmd, text=True, capture_output=True, timeout=10)
+    assert upd_proc.returncode == 0
     verify_cmd = ["uv", "run", "mcp-vcr", "verify", str(tmp_path), "--", sys.executable, str(TOY_SERVER_PATH)]
     ver_proc = subprocess.run(verify_cmd, text=True, capture_output=True, timeout=10)
     assert ver_proc.returncode == 0

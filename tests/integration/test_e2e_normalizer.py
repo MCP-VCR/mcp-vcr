@@ -50,7 +50,8 @@ def test_normalization_across_sessions(tmp_path):
     ]
     
     update_cmd = ["uv", "run", "mcp-vcr", "verify", "--update", str(tmp_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    subprocess.run(update_cmd, text=True, capture_output=True, timeout=10)
+    upd_proc = subprocess.run(update_cmd, text=True, capture_output=True, env=env, timeout=10)
+    assert upd_proc.returncode == 0
     ver_proc = subprocess.run(verify_cmd, text=True, capture_output=True, env=env, timeout=10)
     
     # If normalization works, there should be NO diffs.

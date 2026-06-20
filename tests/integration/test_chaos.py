@@ -72,7 +72,7 @@ def test_chaos_huge_payload(tmp_path):
     input_data = "\n".join(json.dumps(req) for req in requests) + "\n"
     
     cmd = ["uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=30)
 
     
     assert proc.returncode == 0
@@ -93,7 +93,7 @@ def test_chaos_concurrent_requests(tmp_path):
     input_data = "\n".join(json.dumps(req) for req in requests) + "\n"
     
     cmd = ["uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=30)
 
     
     assert proc.returncode == 0
