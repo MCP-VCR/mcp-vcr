@@ -13,7 +13,17 @@ class TranscriptRecorder:
     """
     def __init__(self, filename: Optional[str] = None, server_command: Optional[List[str]] = None):
         self.session_id = secrets.token_hex(4)  # Unique 8-character hex
-        self.server_command = server_command or []
+        raw_command = server_command or []
+        self.server_command = []
+        for arg in raw_command:
+            try:
+                p = Path(arg)
+                if p.is_absolute() or "\\" in str(arg):
+                    self.server_command.append(p.name)
+                else:
+                    self.server_command.append(arg)
+            except Exception:
+                self.server_command.append(arg)
         self.recorded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         
         # Track lazy metadata
