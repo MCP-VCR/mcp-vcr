@@ -35,12 +35,15 @@ def test_normalization_across_sessions(tmp_path):
     assert rec_proc.returncode == 0
     
     # Check that snapshot contains the normalized format, not the raw UUID
+    # Since we bypassed `mcp-vcr snapshot` which normally normalizes the golden file,
+    # we manually normalize the recorded transcript here so `verify` can run properly.
+    import yaml
+    from mcp_vcr.snapshot import normalize_transcript_data
     with open(snapshot_path, "r", encoding="utf-8") as f:
-        content = f.read()
-        # default returned "123e4567" and "2026-06-20T12:00:00Z"
-        # The normalizer should have replaced it with <<UUID-1>> or similar, or it normalizes on the fly during diff.
-        # It's implementation dependent whether normalizer applies before saving or only during diff.
-        # But verify should pass regardless.
+        data = yaml.safe_load(f)
+    norm_data = normalize_transcript_data(data)
+    with open(snapshot_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(norm_data, f, sort_keys=True)
     
     # 2. Verify with changed mode (server returns new UUID "999e8888" and timestamp "2026-06-21T13:00:00Z")
     env["TOY_SERVER_MODE"] = "changed"
@@ -50,9 +53,9 @@ def test_normalization_across_sessions(tmp_path):
     ]
     
     update_cmd = ["uv", "run", "mcp-vcr", "verify", "--update", str(tmp_path), "--", sys.executable, str(TOY_SERVER_PATH)]
+    ver_proc = subprocess.run(verify_cmd, text=True, capture_output=True, env=env, timeout=10)
+    assert ver_proc.returncode == 0, f"Verification failed despite normalization. output:\n{ver_proc.stdout}\n{ver_proc.stderr}"
+    
+    # Optional: keep update-path coverage separately
     upd_proc = subprocess.run(update_cmd, text=True, capture_output=True, env=env, timeout=10)
     assert upd_proc.returncode == 0
-    ver_proc = subprocess.run(verify_cmd, text=True, capture_output=True, env=env, timeout=10)
-    
-    # If normalization works, there should be NO diffs.
-    assert ver_proc.returncode == 0, f"Verification failed despite normalization. output:\n{ver_proc.stdout}\n{ver_proc.stderr}"
