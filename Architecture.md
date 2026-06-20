@@ -103,9 +103,11 @@ mcp-vcr replay session.yaml -- python server.py
 4. The proxy reads server responses from `server.stdout` and writes them to `sys.stdout` (if a real client is connected) and to a new transcript (for diffing).
 5. Replay does not enforce timing by default. Messages are sent as fast as the server responds to each one.
 
-### Check mode
+### Verify mode
 
-`check` is replay mode with an implicit diff at the end. The exit code is 0 if responses match the recorded transcript (within the configured diff mode), 1 if any responses differ.
+`verify` is replay mode with an implicit diff at the end. The exit code is 0 if responses match the recorded transcript (within the configured diff mode), 1 if any responses differ.
+
+When run with `--update`, if changes are detected, it reconstructs a full transcript by merging the original client requests (`c2s`) with the new, normalized server responses (`s2c`), and overwrites the golden snapshot. This ensures golden snapshots remain fully valid, replayable transcripts while absorbing the new server schema.
 
 ---
 

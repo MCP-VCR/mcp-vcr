@@ -17,26 +17,7 @@ All architectural decisions, integrations, and extensions are governed by a sing
 
 ---
 
-## Accomplished Milestones (v0.1 & v0.2)
-
-We have successfully locked down and shipped the core foundation of MCP-VCR:
-
-*   [x] **Phase 1–3: Bidirectional stdio Proxy & Schema v1**
-    *   High-performance, non-blocking asynchronous pipes.
-    *   Classified and validated JSON-RPC v1 YAML schema with lazy metadata backfilling.
-*   [x] **Phase 4–5: In-Flight Redaction & Normalization Chain**
-    *   Recursive redaction of keys, regex credential patterns, and absolute filesystem paths.
-    *   Five sequential normalizers (Timestamps, UUIDs, Page Cursors, Local Paths, JSON-RPC sequential IDs) yielding clean, reproducible snapshots.
-*   [x] **Phase 6–8: Replay, Diff Engine & Golden Snapshots**
-    *   JSON-RPC ID-paired replay and structural/semantic/strict comparison diffing.
-    *   Automatic golden snapshot creation (`snapshot`) and verification checking (`verify`).
-*   [x] **Phase 9–10: CLI Polish, Compatibility Suite & Technical Documentation**
-    *   Fully tested CLI flag coverage with backward compatibility gates supporting legacy version 0 transcripts on-the-fly.
-    *   Expanded test suite (85 tests passing successfully) and complete developer onboarding and CI guides.
-
----
-
-## Post-v0.2 Long-Term Roadmap (What Lies Ahead)
+## Roadmap
 
 With the core testing infrastructure stable and validated, the roadmap tracks high-value areas intentionally deferred to keep the initial design lightweight.
 
