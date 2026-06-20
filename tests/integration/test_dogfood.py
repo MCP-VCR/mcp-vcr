@@ -23,7 +23,7 @@ def test_dogfood_record_pytest(tmp_path):
         "--", "uv", "run", "pytest", str(test_file)
     ]
     
-    proc = subprocess.run(cmd, text=True, capture_output=True)
+    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=30)
     
     # Pytest should succeed inside the wrapper
     assert proc.returncode == 0

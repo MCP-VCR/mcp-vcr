@@ -27,7 +27,7 @@ def test_redaction(tmp_path):
         "uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path),
         "--", sys.executable, str(TOY_SERVER_PATH)
     ]
-    rec_proc = subprocess.run(record_cmd, input=input_data, text=True, capture_output=True)
+    rec_proc = subprocess.run(record_cmd, input=input_data, text=True, capture_output=True, timeout=10)
 
     assert rec_proc.returncode == 0
     
