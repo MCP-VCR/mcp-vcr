@@ -38,7 +38,7 @@ def test_redaction(tmp_path):
     assert len(messages) > 0
     
     server_msgs = [m for m in messages if m["dir"] == "s2c"]
-    tool_call_resp = server_msgs[1]["payload"]
+    tool_call_resp = next(m["payload"] for m in server_msgs if m["payload"].get("id") == 2)
     
     assert tool_call_resp["result"]["api_key"] == "<REDACTED_api_key>"
     assert tool_call_resp["result"]["nested"]["token"] == "<REDACTED_token>"

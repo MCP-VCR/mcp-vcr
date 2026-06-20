@@ -219,7 +219,7 @@ class ReplayEngine:
                     sanitized_args.append(p.name)
                 else:
                     sanitized_args.append(arg)
-            except Exception:
+            except (TypeError, ValueError):
                 sanitized_args.append(arg)
                 
         meta_dict = {

@@ -22,7 +22,7 @@ class TranscriptRecorder:
                     self.server_command.append(p.name)
                 else:
                     self.server_command.append(arg)
-            except Exception:
+            except (TypeError, ValueError):
                 self.server_command.append(arg)
         self.recorded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         

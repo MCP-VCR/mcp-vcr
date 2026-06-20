@@ -7,7 +7,6 @@ import sys
 
 TOY_SERVER_PATH = Path(__file__).parent / "toy_server.py"
 
-@pytest.mark.skip(reason="Schema misalignment after normalizer refactor")
 def test_normalization_across_sessions(tmp_path):
     """
     Test that UUIDs and timestamps are correctly normalized, preventing false diffs

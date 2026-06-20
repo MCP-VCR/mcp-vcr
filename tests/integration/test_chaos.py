@@ -20,7 +20,7 @@ def test_chaos_invalid_json(tmp_path):
     input_data = json.dumps(init_req) + "\n" + "{invalid\n" + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "resources/list"}) + "\n" + json.dumps({"jsonrpc": "2.0", "method": "exit"}) + "\n"
     
     cmd = ["uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
 
     
     # Should not crash proxy, proxy exits 0
@@ -44,7 +44,7 @@ def test_chaos_server_crash(tmp_path):
     input_data = "\n".join(json.dumps(req) for req in requests) + "\n"
     
     cmd = ["uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
 
     
     # The proxy will probably exit with non-zero because the child process died
@@ -72,7 +72,7 @@ def test_chaos_huge_payload(tmp_path):
     input_data = "\n".join(json.dumps(req) for req in requests) + "\n"
     
     cmd = ["uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
 
     
     assert proc.returncode == 0
@@ -93,7 +93,7 @@ def test_chaos_concurrent_requests(tmp_path):
     input_data = "\n".join(json.dumps(req) for req in requests) + "\n"
     
     cmd = ["uv", "run", "mcp-vcr", "record", "-o", str(snapshot_path), "--", sys.executable, str(TOY_SERVER_PATH)]
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
 
     
     assert proc.returncode == 0

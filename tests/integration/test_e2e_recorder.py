@@ -32,7 +32,7 @@ def test_recorder_exact_match(tmp_path):
         "--", sys.executable, str(TOY_SERVER_PATH)
     ]
     
-    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True)
+    proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True, timeout=10)
 
     assert proc.returncode == 0
     
@@ -55,3 +55,4 @@ def test_recorder_exact_match(tmp_path):
     assert len(server_msgs) == 3 # initialized has no response
     
     assert client_msgs[3]["payload"]["params"]["arguments"]["arg"] == "hello unicode 🦊\nmultiline"
+    assert session["meta"]["server_command"] == [Path(sys.executable).name, "toy_server.py"]

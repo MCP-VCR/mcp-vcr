@@ -96,14 +96,17 @@ def main():
                         }
                     elif val == "norm_test":
                         # Return different UUIDs based on time or random if mode is changing
-                        uid = "123e4567" if mode == "default" else "999e8888"
-                        ts = "2026-06-20T12:00:00Z" if mode == "default" else "2026-06-21T13:00:00Z"
+                        uid = "123e4567-e89b-12d3-a456-426614174000" if mode == "default" else "999e8888-e89b-12d3-a456-426614174000"
+                        ts = "2026-06-20T12:00:00.000Z" if mode == "default" else "2026-06-21T13:00:00.000Z"
                         csr = "abc123" if mode == "default" else "xyz999"
                         resp["result"] = {
+                            "id": uid,
+                            "timestamp": ts,
+                            "cursor": csr,
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps({"id": uid, "timestamp": ts, "cursor": csr})
+                                    "text": "norm test result"
                                 }
                             ]
                         }

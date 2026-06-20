@@ -7,7 +7,6 @@ import sys
 
 TOY_SERVER_PATH = Path(__file__).parent / "toy_server.py"
 
-@pytest.mark.skip(reason="Schema misalignment after normalizer refactor")
 def test_replay_correctness(tmp_path):
     """
     Test that replay reproduces the exact conversation and fails when output changes.
@@ -39,7 +38,7 @@ def test_replay_correctness(tmp_path):
     verify_cmd = ["uv", "run", "mcp-vcr", "verify", str(tmp_path), "--", sys.executable, str(TOY_SERVER_PATH)]
     ver_proc = subprocess.run(verify_cmd, text=True, capture_output=True)
     assert ver_proc.returncode == 0
-    assert "0 diffs" in ver_proc.stdout or "0 diffs" in ver_proc.stderr or ver_proc.returncode == 0
+    assert "0 diffs" in ver_proc.stdout or "0 diffs" in ver_proc.stderr
     
     # 3. Intentionally change server output and verify it fails
     env = os.environ.copy()
