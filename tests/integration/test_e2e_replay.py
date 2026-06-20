@@ -50,5 +50,5 @@ def test_replay_correctness(tmp_path):
     ]
     ver_proc_fail = subprocess.run(verify_cmd_fail, text=True, capture_output=True, env=env, timeout=10)
     assert ver_proc_fail.returncode != 0
-    # The output should contain diffs
-    assert "Diff" in ver_proc_fail.stdout or "Diff" in ver_proc_fail.stderr or "diff" in ver_proc_fail.stdout.lower()
+    # The output should contain diff details, which indicates a regression
+    assert "Regression detected" in ver_proc_fail.stderr
