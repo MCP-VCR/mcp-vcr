@@ -240,11 +240,19 @@ class ReplayEngine:
             meta_dict["incomplete_reason"] = incomplete_reason
             
         messages_list = []
+        all_msgs = []
+        for msg in c2s_messages:
+            all_msgs.append(Message(t=msg.t, dir=Direction.C2S, payload=msg.payload))
         for resp in responses:
+            all_msgs.append(resp)
+            
+        all_msgs.sort(key=lambda x: x.t)
+        
+        for m in all_msgs:
             messages_list.append({
-                "t": resp.t,
-                "dir": resp.dir.value,
-                "payload": resp.payload
+                "t": m.t,
+                "dir": m.dir.value,
+                "payload": m.payload
             })
             
         output_doc = {
