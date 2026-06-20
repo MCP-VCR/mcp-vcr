@@ -158,10 +158,25 @@ async def run_verify(
             
             if update:
                 if has_changes:
+                    # Reconstruct full transcript by merging original C2S with new S2C
+                    with open(source_path, "r", encoding="utf-8") as f:
+                        source_data = yaml.safe_load(f) or {}
+                        
+                    merged_messages = []
+                    for msg in source_data.get("messages", []):
+                        if msg.get("dir") == "c2s":
+                            merged_messages.append(msg)
+                            
+                    merged_messages.extend([m for m in normalized_replay_data.get("messages", []) if m.get("dir") == "s2c"])
+                    merged_messages.sort(key=lambda x: x.get("t", 0))
+                    
+                    new_golden_data = copy.deepcopy(normalized_replay_data)
+                    new_golden_data["messages"] = merged_messages
+                    
                     # Overwrite golden file
                     temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
                     with open(temp_path, "w", encoding="utf-8") as f:
-                        yaml.safe_dump(normalized_replay_data, f, sort_keys=True, default_flow_style=False)
+                        yaml.safe_dump(new_golden_data, f, sort_keys=True, default_flow_style=False)
                     try:
                         validate_file(temp_path)
                     except Exception:

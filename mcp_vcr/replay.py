@@ -211,11 +211,22 @@ class ReplayEngine:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         new_session_id = f"{transcript.meta.session_id}-replay-{timestamp}"
         
+        sanitized_args = []
+        for arg in args:
+            try:
+                p = Path(arg)
+                if p.is_absolute() or "\\" in str(arg):
+                    sanitized_args.append(p.name)
+                else:
+                    sanitized_args.append(arg)
+            except (TypeError, ValueError):
+                sanitized_args.append(arg)
+                
         meta_dict = {
             "version": 1,
             "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "session_id": new_session_id,
-            "server_command": args,
+            "server_command": sanitized_args,
             "schema_version": "1.0"
         }
         
