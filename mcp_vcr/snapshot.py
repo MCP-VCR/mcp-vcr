@@ -104,13 +104,20 @@ async def run_verify(
 ) -> int:
     """Replay sessions against a server, diff normalized results vs golden snapshots, and report regressions or update goldens."""
     p_snapshots = Path(snapshots_dir)
-    if not p_snapshots.exists() or not p_snapshots.is_dir():
-        click.secho(f"ERROR: Snapshot directory '{snapshots_dir}' does not exist.", fg="red", err=True)
+    if not p_snapshots.exists():
+        click.secho(f"ERROR: Path '{snapshots_dir}' does not exist.", fg="red", err=True)
         return 1
         
-    golden_files = sorted(list(p_snapshots.glob("*_golden.yaml")) + list(p_snapshots.glob("*_golden.yml")))
+    if p_snapshots.is_file():
+        golden_files = [p_snapshots]
+    else:
+        golden_files = sorted(list(p_snapshots.glob("*_golden.yaml")) + list(p_snapshots.glob("*_golden.yml")))
+        if not golden_files:
+            # Fallback to standard yaml files
+            golden_files = sorted(list(p_snapshots.glob("*.yaml")) + list(p_snapshots.glob("*.yml")))
+            
     if not golden_files:
-        click.secho(f"ERROR: No golden snapshots found in '{snapshots_dir}'", fg="red", err=True)
+        click.secho(f"ERROR: No snapshots found in '{snapshots_dir}'", fg="red", err=True)
         return 1
         
     engine = ReplayEngine()
