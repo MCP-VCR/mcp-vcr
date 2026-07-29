@@ -11,6 +11,9 @@ from .interceptor import MessageInterceptor
 from .recorder import TranscriptRecorder
 from .redactor import Redactor
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 @click.group()
 @click.version_option(version="0.1.0", prog_name="mcp-vcr")
 def main():
