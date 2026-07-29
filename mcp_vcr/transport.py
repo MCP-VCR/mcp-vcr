@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from typing import Any, List, Optional
 from .interceptor import MessageInterceptor
 from .schema import Direction
@@ -16,9 +17,27 @@ async def get_stdin_reader(limit: int = 16 * 1024 * 1024) -> asyncio.StreamReade
     """
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(limit=limit)
-    protocol = asyncio.StreamReaderProtocol(reader)
-    # Using sys.stdin for the read pipe connection
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    
+    if sys.platform == "win32":
+        def read_worker():
+            try:
+                fd = sys.stdin.fileno()
+                while True:
+                    data = os.read(fd, 4096)
+                    if not data:
+                        break
+                    loop.call_soon_threadsafe(reader.feed_data, data)
+            except Exception:
+                pass
+            finally:
+                loop.call_soon_threadsafe(reader.feed_eof)
+
+        t = threading.Thread(target=read_worker, daemon=True)
+        t.start()
+    else:
+        protocol = asyncio.StreamReaderProtocol(reader)
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+        
     return reader
 
 async def launch_server(server_args: List[str], limit: int = 16 * 1024 * 1024) -> asyncio.subprocess.Process:
