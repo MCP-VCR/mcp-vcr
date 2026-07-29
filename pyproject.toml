@@ -28,7 +28,7 @@ python_files = "test_*.py"
 asyncio_mode = "auto"
 
 [tool.setuptools]
-packages = ["mcp_vcr"]
+packages = ["mcp_vcr", "mcp_vcr.schemas"]
 
 [tool.setuptools.package-data]
 mcp_vcr = ["schemas/transcript-schema-v1.json"]
