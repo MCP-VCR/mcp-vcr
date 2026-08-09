@@ -1,6 +1,6 @@
 [project]
 name = "mcp-vcr"
-version = "0.1.5"
+version = "0.2.0"
 description = "A deterministic, replayable, human-readable MCP transcript format and proxy."
 authors = [
     { name = "mcp-vcr contributors" }
