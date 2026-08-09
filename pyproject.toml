@@ -37,7 +37,7 @@ pythonpath = [
 ]
 
 [tool.setuptools]
-packages = ["mcp_vcr", "mcp_vcr.schemas"]
+packages = ["mcp_vcr", "mcp_vcr.schemas", "mcp_vcr.transports"]
 
 [tool.setuptools.package-data]
 mcp_vcr = ["schemas/transcript-schema-v1.json"]
