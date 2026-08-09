@@ -1,0 +1,19 @@
+name: Action Smoke Test
+
+on:
+  push:
+    branches: [ main, transport-abstraction ]
+  pull_request:
+    branches: [ main, transport-abstraction ]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Action Smoke Test
+        uses: ./
+        with:
+          snapshots-dir: 'snapshots'
+          server-command: 'python server.py --name "toy server"'
