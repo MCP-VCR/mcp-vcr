@@ -141,14 +141,21 @@ class TranscriptRecorder:
                                 
                             if changed:
                                 fd, temp_path = tempfile.mkstemp(dir=temp_dir, prefix="mcp_vcr_backfill_")
-                                with os.fdopen(fd, "w", encoding="utf-8") as f_out:
-                                    f_out.write(json.dumps(meta) + "\n")
-                                    while True:
-                                        chunk = f_in.read(1024 * 1024)
-                                        if not chunk:
-                                            break
-                                        f_out.write(chunk)
-                                os.replace(temp_path, self.filepath)
+                                try:
+                                    with os.fdopen(fd, "w", encoding="utf-8") as f_out:
+                                        f_out.write(json.dumps(meta) + "\n")
+                                        while True:
+                                            chunk = f_in.read(1024 * 1024)
+                                            if not chunk:
+                                                break
+                                            f_out.write(chunk)
+                                    os.replace(temp_path, self.filepath)
+                                except Exception:
+                                    try:
+                                        os.unlink(temp_path)
+                                    except Exception:
+                                        pass
+                                    raise
                     except Exception as je:
                         sys.stderr.write(f"Warning: Failed to backfill NDJSON metadata: {je}\n")
             else:

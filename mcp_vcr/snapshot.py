@@ -84,16 +84,14 @@ def run_snapshot(session_yaml_path: Path) -> Path:
     
     # Write full, deterministic transcript with stable key ordering
     temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
-    with open(temp_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(normalized_data, f, sort_keys=True, default_flow_style=False)
-
     try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(normalized_data, f, sort_keys=True, default_flow_style=False)
         validate_file(temp_path)
+        temp_path.replace(golden_path)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
-
-    temp_path.replace(golden_path)
     
     return golden_path
 
@@ -184,14 +182,14 @@ async def run_verify(
                     
                     # Overwrite golden file
                     temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
-                    with open(temp_path, "w", encoding="utf-8") as f:
-                        yaml.safe_dump(new_golden_data, f, sort_keys=True, default_flow_style=False)
                     try:
+                        with open(temp_path, "w", encoding="utf-8") as f:
+                            yaml.safe_dump(new_golden_data, f, sort_keys=True, default_flow_style=False)
                         validate_file(temp_path)
+                        temp_path.replace(golden_path)
                     except Exception:
                         temp_path.unlink(missing_ok=True)
                         raise
-                    temp_path.replace(golden_path)
                     results[golden_path] = ("updated", "Golden snapshot updated with new replayed responses", None)
                     updated_count += 1
                 else:
