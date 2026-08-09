@@ -43,7 +43,16 @@ messages:
         b'{"jsonrpc": "2.0", "id": 3, "result": "pong"}\n'
     ])
 
-    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    current_time = 0.0
+    def mock_time():
+        return current_time
+
+    async def mock_sleep_impl(delay):
+        nonlocal current_time
+        current_time += delay
+
+    with patch("time.monotonic", side_effect=mock_time), \
+         patch("asyncio.sleep", side_effect=mock_sleep_impl) as mock_sleep:
         output_path = await engine.run_replay(session_file, transport=mock_transport)
         
         # Delays expected:

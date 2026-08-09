@@ -75,6 +75,8 @@ def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
             
     except yaml.YAMLError as e:
         errors.append({"loc": ("yaml",), "msg": f"YAML Syntax Error: {e}"})
+    except ValueError as e:
+        errors.append({"loc": ("ndjson",), "msg": str(e)})
     except FileNotFoundError:
         errors.append({"loc": ("file",), "msg": f"File not found: {file_path}"})
     except (OSError, UnicodeDecodeError) as e:

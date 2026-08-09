@@ -20,7 +20,7 @@ class Redactor:
     Redactor replaces values of known sensitive fields, patterns, and filesystem paths
     in JSON-RPC payloads before recording them in transcripts.
     """
-    def __init__(self, config_path: Optional[Path] = None, enabled: bool = True):
+    def __init__(self, config_path: Optional[Path] = None, enabled: bool = True, snapshot_path: Optional[Path] = None):
         self.enabled = enabled
         self.sensitive_fields: Set[str] = set(DEFAULT_FIELDS)
         self.compiled_patterns: List[re.Pattern] = []
@@ -35,13 +35,13 @@ class Redactor:
         self.windows_path_re = re.compile(r"^[a-zA-Z]:\\")
         
         # Load custom configuration from default or custom path
-        self._load_config(config_path)
+        self._load_config(config_path, snapshot_path)
 
-    def _load_config(self, config_path: Optional[Path] = None) -> None:
+    def _load_config(self, config_path: Optional[Path] = None, snapshot_path: Optional[Path] = None) -> None:
         from .config import Config, ConfigError
         try:
             config = Config.load(config_path)
-            redact_cfg = config.redact_config()
+            redact_cfg = config.redact_config(snapshot_path)
         except ConfigError:
             raise
         except Exception as e:

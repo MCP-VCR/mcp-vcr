@@ -43,7 +43,7 @@ async def launch_server(server_args: List[str], limit: int = 16 * 1024 * 1024) -
 
 async def pump_c2s(
     reader: asyncio.StreamReader,
-    writer: asyncio.subprocess.Process,
+    writer: asyncio.StreamWriter,
     interceptor: Optional[Any] = None
 ) -> None:
     warnings.warn(
@@ -51,37 +51,7 @@ async def pump_c2s(
         DeprecationWarning,
         stacklevel=2
     )
-    while True:
-        try:
-            line = await reader.readline()
-            if not line:
-                logger.info("Client stdin EOF reached")
-                break
-                
-            stripped = line.strip()
-            if not stripped:
-                continue
-                
-            payload = None
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Malformed JSON line from client (ignored): {e}. Line: {stripped!r}")
-                
-            if payload is not None and interceptor:
-                try:
-                    interceptor.observe(payload, Direction.C2S)
-                except Exception as ie:
-                    logger.error(f"Error in c2s interceptor call: {ie}")
-                    
-            writer.write(line)
-            await writer.drain()
-            
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Unexpected error in c2s pump: {e}")
-            break
+    await stdio.pump_c2s(reader, writer, interceptor)
 
 async def pump_s2c(
     reader: asyncio.StreamReader,
@@ -93,37 +63,7 @@ async def pump_s2c(
         DeprecationWarning,
         stacklevel=2
     )
-    while True:
-        try:
-            line = await reader.readline()
-            if not line:
-                logger.info("Server stdout EOF reached")
-                break
-                
-            stripped = line.strip()
-            if not stripped:
-                continue
-                
-            payload = None
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Malformed JSON line from server (ignored): {e}. Line: {stripped!r}")
-                
-            if payload is not None and interceptor:
-                try:
-                    interceptor.observe(payload, Direction.S2C)
-                except Exception as ie:
-                    logger.error(f"Error in s2c interceptor call: {ie}")
-                    
-            writer.write(line)
-            await writer.drain()
-            
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Unexpected error in s2c pump: {e}")
-            break
+    await stdio.pump_s2c(reader, writer, interceptor)
 
 async def pump_stderr(
     reader: asyncio.StreamReader,
@@ -134,21 +74,7 @@ async def pump_stderr(
         DeprecationWarning,
         stacklevel=2
     )
-    while True:
-        try:
-            line = await reader.readline()
-            if not line:
-                logger.info("Server stderr EOF reached")
-                break
-                
-            writer.write(line)
-            await writer.drain()
-            
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Unexpected error in stderr pump: {e}")
-            break
+    await stdio.pump_stderr(reader, writer)
 
 async def run_proxy(
     server_args: List[str],

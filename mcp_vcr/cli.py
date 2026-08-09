@@ -3,6 +3,7 @@ import click
 import sys
 import yaml
 import secrets
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from .validator import validate_file, ValidationError
@@ -10,6 +11,34 @@ from .transports.stdio import run_proxy
 from .interceptor import MessageInterceptor
 from .recorder import TranscriptRecorder
 from .redactor import Redactor
+
+logger = logging.getLogger("mcp-vcr.cli")
+
+def _resolve_sse_settings(config_path, sse_url, sse_header):
+    from .config import Config, ConfigError
+    transport_cfg = {}
+    if config_path:
+        try:
+            cfg = Config.load(config_path)
+            transport_cfg = cfg.raw_data.get("transport", {})
+        except ConfigError as ce:
+            click.secho(f"WARNING: Configuration error: {ce}", fg="yellow", err=True)
+        except Exception as e:
+            logger.warning(f"Failed to load configuration: {e}")
+            
+    resolved_url = sse_url or transport_cfg.get("sse_url")
+    if not resolved_url:
+        click.secho("ERROR: --sse-url is required when using SSE transport.", fg="red", err=True)
+        sys.exit(1)
+        
+    headers = dict(transport_cfg.get("headers", {}))
+    if sse_header:
+        for h in sse_header:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                headers[k.strip()] = v.strip()
+                
+    return resolved_url, headers
 
 @click.group()
 @click.version_option(version="0.1.0", prog_name="mcp-vcr")
@@ -97,37 +126,9 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
         click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
         sys.exit(1)
         
-    if transport == 'sse' and not sse_url:
-        from .config import Config
-        try:
-            cfg = Config.load(config)
-            transport_cfg = cfg.raw_data.get("transport", {})
-            sse_url = transport_cfg.get("sse_url")
-        except Exception:
-            pass
-            
-        if not sse_url:
-            click.secho("ERROR: --sse-url is required when --transport=sse.", fg="red", err=True)
-            sys.exit(1)
-            
-    # Resolve headers for SSE
     headers = {}
     if transport == 'sse':
-        from .config import Config
-        try:
-            cfg = Config.load(config)
-            transport_cfg = cfg.raw_data.get("transport", {})
-            headers = transport_cfg.get("headers", {})
-        except Exception:
-            pass
-            
-        if sse_header:
-            cli_headers = {}
-            for h in sse_header:
-                if ":" in h:
-                    k, v = h.split(":", 1)
-                    cli_headers[k.strip()] = v.strip()
-            headers.update(cli_headers)
+        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
             
     # Determine output folder and filename
     output_path = output if output else Path("sessions")
@@ -155,7 +156,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
         
     # Initialize redactor
     try:
-        redactor = Redactor(config_path=config, enabled=not no_redact)
+        redactor = Redactor(config_path=config, enabled=not no_redact, snapshot_path=filepath)
     except Exception as e:
         click.secho(
             f"ERROR: Failed to initialize redaction/config: {e}. "
@@ -183,18 +184,17 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     interceptor = MessageInterceptor(recorder=recorder, redactor=redactor)
     
     # Initialize transport instance
+    SseTransport = None
     try:
         from .transports import SseTransport
-        sse_transport_available = True
     except ImportError:
-        sse_transport_available = False
+        pass
 
     from .transports import StdioTransport, run_proxy_with_transport
     if transport == 'sse':
-        if not sse_transport_available:
+        if SseTransport is None:
             click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
             sys.exit(1)
-        from .transports import SseTransport
         transport_inst = SseTransport(sse_url=sse_url, headers=headers)
         click.secho(f"Starting proxy for SSE server: {sse_url}", fg="cyan", err=True)
     else:
@@ -213,8 +213,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     try:
         exit_code = asyncio.run(run_proxy_with_transport(transport_inst, interceptor=interceptor, recorder=recorder))
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.debug("Proxy failed with exception", exc_info=True)
         click.secho(f"ERROR: Proxy failed: {e}.", fg="red", err=True)
     finally:
         try:
@@ -249,43 +248,17 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
         
     transport_inst = None
     if transport == 'sse' or sse_url:
-        from .config import Config
-        headers = {}
-        try:
-            cfg = Config.load(config)
-            headers = cfg.raw_data.get("transport", {}).get("headers", {})
-        except Exception:
-            pass
-            
-        if sse_header:
-            cli_headers = {}
-            for h in sse_header:
-                if ":" in h:
-                    k, v = h.split(":", 1)
-                    cli_headers[k.strip()] = v.strip()
-            headers.update(cli_headers)
-            
-        if not sse_url:
-            try:
-                cfg = Config.load(config)
-                sse_url = cfg.raw_data.get("transport", {}).get("sse_url")
-            except Exception:
-                pass
-                
-        if not sse_url:
-            click.secho("ERROR: --sse-url is required when --transport=sse.", fg="red", err=True)
-            sys.exit(1)
-            
+        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+        
+        SseTransport = None
         try:
             from .transports import SseTransport
-            sse_transport_available = True
         except ImportError:
-            sse_transport_available = False
+            pass
 
-        if not sse_transport_available:
+        if SseTransport is None:
             click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
             sys.exit(1)
-        from .transports import SseTransport
         transport_inst = SseTransport(sse_url=sse_url, headers=headers)
         click.secho(f"Starting replay of {session} against SSE server: {sse_url}", fg="cyan", err=True)
     else:

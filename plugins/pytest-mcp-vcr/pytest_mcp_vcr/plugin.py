@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
@@ -8,6 +9,8 @@ import pytest
 
 from mcp_vcr.transports.base import Transport
 from mcp_vcr.recorder import TranscriptRecorder
+
+logger = logging.getLogger("pytest-mcp-vcr")
 
 class RecordingTransport(Transport):
     """
@@ -131,8 +134,10 @@ class ReplayingTransport(Transport):
                         if paired:
                             self.s2c_to_client_id[id(paired)] = req_id
                         break
-        except Exception:
-            pass
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            logger.error("Failed to decode or parse C2S payload in ReplayingTransport: %s", e)
+        except Exception as e:
+            logger.error("Unexpected error in ReplayingTransport write_to_server: %s", e)
 
     async def read_server_message(self) -> Optional[bytes]:
         while self.msg_index < len(self.messages):

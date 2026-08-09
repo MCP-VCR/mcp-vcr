@@ -49,7 +49,11 @@ def iter_messages(path: Path) -> Iterator[Dict[str, Any]]:
         yield from messages
 
 def load_meta(path: Path) -> Dict[str, Any]:
-    """Efficiently load only the meta section of a transcript."""
+    """Load only the meta section of a transcript.
+    
+    Optimized for NDJSON transcripts (reads only the first line).
+    For YAML transcripts, the entire file is parsed.
+    """
     fmt = detect_format(path)
     if fmt == "ndjson":
         try:

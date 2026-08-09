@@ -33,7 +33,10 @@ class SseTransport(Transport):
         self.stdin_reader: Optional[asyncio.StreamReader] = None
         self.client_writer: Optional[StreamWriterWrapper] = None
         
-        self._server_queue: asyncio.Queue = asyncio.Queue()
+        self._server_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self._endpoint_resolved = asyncio.Event()
+        if post_url:
+            self._endpoint_resolved.set()
         self._read_task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -47,6 +50,15 @@ class SseTransport(Transport):
         
         # Start background task to read from SSE stream
         self._read_task = asyncio.create_task(self._read_sse_stream())
+        
+        # Wait for dynamic POST endpoint discovery (max 5 seconds)
+        try:
+            await asyncio.wait_for(self._endpoint_resolved.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            if self.post_url == self.sse_url:
+                logger.warning("Endpoint event not received within timeout, using base SSE URL for POSTs")
+            else:
+                raise TimeoutError("SSE POST endpoint discovery timed out (endpoint event not received).")
 
     async def read_client_message(self) -> Optional[bytes]:
         if not self.stdin_reader:
@@ -61,8 +73,10 @@ class SseTransport(Transport):
             raise RuntimeError("Transport not started")
         
         payload = json.loads(data.decode("utf-8"))
+        method = payload.get("method")
+        msg_id = payload.get("id")
 
-        logger.debug(f"POSTing to {self.post_url}: {payload}")
+        logger.debug(f"POSTing to {self.post_url} (JSON-RPC method: {method!r}, id: {msg_id!r})")
         timeout = aiohttp.ClientTimeout(total=self.post_timeout)
         try:
             async with self.session.post(self.post_url, json=payload, timeout=timeout) as resp:
@@ -138,13 +152,17 @@ class SseTransport(Transport):
                                 else:
                                     self.post_url = str(resolved_url)
                                     logger.info(f"Dynamically resolved SSE POST URL to: {self.post_url}")
+                                self._endpoint_resolved.set()
                             else:
                                 if data_content:
-                                    try:
-                                        payload = json.loads(data_content)
-                                        self._server_queue.put_nowait(payload)
-                                    except Exception as e:
-                                        logger.error(f"Failed to parse SSE data: {e}. Data: {data_content}")
+                                    if len(data_content) > self.limit:
+                                        logger.error(f"SSE payload size {len(data_content)} exceeds limit {self.limit}, dropping message.")
+                                    else:
+                                        try:
+                                            payload = json.loads(data_content)
+                                            await self._server_queue.put(payload)
+                                        except Exception as e:
+                                            logger.error(f"Failed to parse or queue SSE data: {e}. Data: {data_content}")
                         current_event = None
                         data_buffer = []
                         continue
@@ -166,4 +184,5 @@ class SseTransport(Transport):
         except Exception as e:
             logger.error(f"Error in SSE stream reader: {e}")
         finally:
+            self._endpoint_resolved.set()
             self._server_queue.put_nowait(None)

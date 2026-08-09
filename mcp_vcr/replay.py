@@ -89,15 +89,15 @@ class ReplayEngine:
             replay_cfg = {}
 
         # Prioritize CLI/explicit init overrides over the matching config file overrides
-        timeout_ms = getattr(self, "timeout_ms_override", None)
+        timeout_ms = self.timeout_ms_override
         if timeout_ms is None:
             timeout_ms = replay_cfg.get("timeout_ms", self.timeout_ms or 5000)
             
-        settle_delay_ms = getattr(self, "settle_delay_ms_override", None)
+        settle_delay_ms = self.settle_delay_ms_override
         if settle_delay_ms is None:
             settle_delay_ms = replay_cfg.get("settle_delay_ms", self.settle_delay_ms or 50)
             
-        timing_faithful = getattr(self, "timing_faithful_override", None)
+        timing_faithful = self.timing_faithful_override
         if timing_faithful is None:
             timing_faithful = replay_cfg.get("timing_faithful", self.timing_faithful or False)
 
@@ -110,14 +110,15 @@ class ReplayEngine:
         # 3. Determine server command / endpoint
         transport_type = transport_cfg.get("type", "stdio")
         args = server_args
-        if args is None:
-            if transport_type == "sse":
-                args = [transport_cfg.get("sse_url")] if transport_cfg.get("sse_url") else []
-            else:
-                args = transcript.meta.server_command
-                
-        if transport_type == "stdio" and not args:
-            raise ValueError("No server command specified for replay (not found in args or transcript meta).")
+        if transport is None:
+            if args is None:
+                if transport_type == "sse":
+                    args = [transport_cfg.get("sse_url")] if transport_cfg.get("sse_url") else []
+                else:
+                    args = transcript.meta.server_command
+                    
+            if transport_type == "stdio" and not args:
+                raise ValueError("No server command specified for replay (not found in args or transcript meta).")
             
         logger.info(f"Replaying transcript '{transcript_path}' using {transport_type} transport")
         
@@ -154,11 +155,12 @@ class ReplayEngine:
                 
                 # Insert timing-faithful delay if enabled
                 if timing_faithful:
-                    delay_ms = msg.t - last_t
-                    if delay_ms > 0:
-                        logger.debug(f"Timing-faithful replay: sleeping for {delay_ms}ms before sending message.")
-                        await asyncio.sleep(delay_ms / 1000.0)
-                    last_t = msg.t
+                    target_time = t0 + (msg.t / 1000.0)
+                    now = time.monotonic()
+                    delay = target_time - now
+                    if delay > 0:
+                        logger.debug(f"Timing-faithful replay: sleeping for {delay:.3f}s before sending message.")
+                        await asyncio.sleep(delay)
                 
                 # Detect notifications by absence of id field (or id: null)
                 is_notification = ("id" not in payload) or (payload["id"] is None)

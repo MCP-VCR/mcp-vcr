@@ -39,7 +39,7 @@ def _resolve_value_recursive(node: Any, current_path: str) -> Any:
 def _merge_field(base: Any, override: Any) -> Any:
     """Merge override value into base value."""
     # List replace escape hatch
-    if isinstance(override, dict) and override.get("replace") is True:
+    if isinstance(base, list) and isinstance(override, dict) and override.get("replace") is True:
         return override.get("values", [])
     
     # List extend by default

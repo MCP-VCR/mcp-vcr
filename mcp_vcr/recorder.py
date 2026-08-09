@@ -35,6 +35,10 @@ class TranscriptRecorder:
         # Determine output filename
         if filename:
             self.filepath = Path(filename)
+            if self.format == "ndjson" and self.filepath.suffix in (".yaml", ".yml"):
+                self.filepath = self.filepath.with_suffix(".ndjson")
+            elif self.format == "yaml" and self.filepath.suffix == ".ndjson":
+                self.filepath = self.filepath.with_suffix(".yaml")
         else:
             now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             ext = "ndjson" if self.format == "ndjson" else "yaml"

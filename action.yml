@@ -52,8 +52,8 @@ runs:
           ARGS+=("--timing-faithful")
         fi
         
-        # Safely parse the server command string into a bash array without eval
-        read -r -a CMD_ARRAY <<< "$SERVER_COMMAND"
+        # Safely parse the server command string into a bash array handling shell quotes/escapes
+        mapfile -t CMD_ARRAY < <(python3 -c "import shlex, sys; print('\n'.join(shlex.split(sys.argv[1])))" "$SERVER_COMMAND")
         
         echo "Verifying snapshots under $SNAPSHOTS_DIR..."
         mcp-vcr verify "${ARGS[@]}" "$SNAPSHOTS_DIR" -- "${CMD_ARRAY[@]}"
