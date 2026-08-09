@@ -3,12 +3,14 @@ import contextlib
 import json
 import logging
 import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Set
 import pytest
 
 from mcp_vcr.transports.base import Transport
 from mcp_vcr.recorder import TranscriptRecorder
+from mcp_vcr.validator import load_transcript_data
 
 logger = logging.getLogger("pytest-mcp-vcr")
 
@@ -87,15 +89,16 @@ class ReplayingTransport(Transport):
         self.msg_index = 0
         self.c2s_to_client_id: Dict[int, Any] = {}
         self.s2c_to_client_id: Dict[int, Any] = {}
+        self.consumed_c2s_indices: Set[int] = set()
+        self._c2s_written_event: Optional[asyncio.Event] = None
 
     async def start(self) -> None:
-        from mcp_vcr.validator import load_transcript_data
+        self._c2s_written_event = asyncio.Event()
         data = load_transcript_data(self.transcript_path)
         self.meta = data.get("meta", {})
         self.messages = data.get("messages", [])
 
         # Pair c2s requests with their corresponding s2c responses in FIFO order
-        from collections import defaultdict
         resp_by_id = defaultdict(list)
         for msg in self.messages:
             if msg.get("dir") == "s2c":
@@ -124,16 +127,19 @@ class ReplayingTransport(Transport):
     async def write_to_server(self, data: bytes) -> None:
         try:
             payload = json.loads(data.decode("utf-8"))
-            req_id = payload.get("id")
-            if req_id is not None:
-                # Find the next unmatched c2s request in self.messages
-                for msg in self.messages[self.msg_index:]:
-                    if msg.get("dir") == "c2s" and id(msg) not in self.c2s_to_client_id:
+            # Find the next unmatched c2s request/notification in self.messages
+            for idx, msg in enumerate(self.messages):
+                if msg.get("dir") == "c2s" and idx not in self.consumed_c2s_indices:
+                    self.consumed_c2s_indices.add(idx)
+                    req_id = payload.get("id")
+                    if req_id is not None:
                         self.c2s_to_client_id[id(msg)] = req_id
                         paired = msg.get("paired_response")
                         if paired:
                             self.s2c_to_client_id[id(paired)] = req_id
-                        break
+                    if self._c2s_written_event:
+                        self._c2s_written_event.set()
+                    break
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             logger.error("Failed to decode or parse C2S payload in ReplayingTransport: %s", e)
         except Exception as e:
@@ -145,9 +151,14 @@ class ReplayingTransport(Transport):
             payload = msg.get("payload", {})
 
             if msg.get("dir") == "c2s":
-                # Skip client requests written via write_to_server
-                self.msg_index += 1
-                continue
+                if self.msg_index in self.consumed_c2s_indices:
+                    self.msg_index += 1
+                    continue
+                else:
+                    if self._c2s_written_event:
+                        self._c2s_written_event.clear()
+                        await self._c2s_written_event.wait()
+                    continue
 
             # It is an s2c message (response or notification)
             resp_id = payload.get("id")
@@ -165,7 +176,10 @@ class ReplayingTransport(Transport):
                     return (json.dumps(resp_payload) + "\n").encode("utf-8")
                 else:
                     # Wait until request is mapped
-                    break
+                    if self._c2s_written_event:
+                        self._c2s_written_event.clear()
+                        await self._c2s_written_event.wait()
+                    continue
         return None
 
     @property
@@ -186,7 +200,6 @@ async def vcr_cassette(
     if mode == "record":
         if inner_transport is None:
             raise ValueError("inner_transport is required for record mode")
-        from mcp_vcr.recorder import TranscriptRecorder
         recorder = TranscriptRecorder(filename=str(path))
         recording_transport = RecordingTransport(inner_transport, recorder)
         await recording_transport.start()

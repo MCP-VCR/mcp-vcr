@@ -164,7 +164,11 @@ class SseTransport(Transport):
                                             payload = json.loads(data_content)
                                             await self._server_queue.put(payload)
                                         except Exception as e:
-                                            logger.error(f"Failed to parse or queue SSE data: {e}. Data: {data_content}")
+                                            logger.error(
+                                                "Failed to parse or queue SSE data (%d bytes): %s",
+                                                len(data_content),
+                                                type(e).__name__,
+                                            )
                         current_event = None
                         data_buffer = []
                         data_size = 0
