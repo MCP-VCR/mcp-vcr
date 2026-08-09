@@ -18,6 +18,10 @@ inputs:
     description: 'Enable timing-faithful replay'
     required: false
     default: 'false'
+  mcp-vcr-version:
+    description: 'Version of mcp-vcr package to install'
+    required: false
+    default: '0.2.0'
 runs:
   using: 'composite'
   steps:
@@ -33,7 +37,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        uv tool install "git+https://github.com/Nachiket-Roy/mcp-vcr.git@transport-abstraction"
+        uv tool install mcp-vcr==${{ inputs.mcp-vcr-version }}
 
     - name: Verify Snapshots
       shell: bash
