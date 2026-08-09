@@ -22,18 +22,18 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Python
-      uses: actions/setup-python@82c7e631dfb9861178db33a406550b73c4d7ec6b # v5.1.0
+      uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
       with:
         python-version: '3.12'
 
     - name: Set up uv
-      uses: astral-sh/setup-uv@f724c812efb88544f4ee5134c005086469b2a647 # v5.3.0
+      uses: astral-sh/setup-uv@1edb52594c857e2b5b13128931090f0640537287 # v5.3.0
 
     - name: Install mcp-vcr
       shell: bash
       run: |
         set -euo pipefail
-        uv tool install mcp-vcr==0.1.5
+        uv tool install "git+https://github.com/Nachiket-Roy/mcp-vcr.git@transport-abstraction"
 
     - name: Verify Snapshots
       shell: bash
