@@ -154,7 +154,7 @@ class ReplayingTransport(Transport):
             if resp_id is None:
                 # Notification: yield immediately
                 self.msg_index += 1
-                return json.dumps(payload).encode("utf-8")
+                return (json.dumps(payload) + "\n").encode("utf-8")
             else:
                 # Response: check if mapped
                 client_id = self.s2c_to_client_id.get(id(msg))
@@ -162,7 +162,7 @@ class ReplayingTransport(Transport):
                     resp_payload = dict(payload)
                     resp_payload["id"] = client_id
                     self.msg_index += 1
-                    return json.dumps(resp_payload).encode("utf-8")
+                    return (json.dumps(resp_payload) + "\n").encode("utf-8")
                 else:
                     # Wait until request is mapped
                     break

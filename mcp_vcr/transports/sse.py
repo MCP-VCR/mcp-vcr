@@ -135,12 +135,14 @@ class SseTransport(Transport):
                     
                 current_event = None
                 data_buffer = []
+                data_size = 0
+                dropped_current_event = False
                 async for line in response.content:
                     line_str = line.decode("utf-8").strip("\r\n")
                     
                     if not line_str:
                         # Blank line: dispatch buffered data
-                        if data_buffer:
+                        if not dropped_current_event and data_buffer:
                             data_content = "\n".join(data_buffer)
                             if current_event == "endpoint":
                                 # Dynamic POST endpoint discovery
@@ -165,6 +167,8 @@ class SseTransport(Transport):
                                             logger.error(f"Failed to parse or queue SSE data: {e}. Data: {data_content}")
                         current_event = None
                         data_buffer = []
+                        data_size = 0
+                        dropped_current_event = False
                         continue
                         
                     if line_str.startswith(":"):
@@ -174,15 +178,55 @@ class SseTransport(Transport):
                     if line_str.startswith("event:"):
                         current_event = line_str[6:].strip()
                     elif line_str.startswith("data:"):
+                        if dropped_current_event:
+                            continue
                         # Strip at most one leading space after data:
                         val = line_str[5:]
                         if val.startswith(" "):
                             val = val[1:]
-                        data_buffer.append(val)
+                        data_size += len(val.encode("utf-8")) + 1
+                        if data_size > self.limit:
+                            logger.error(f"Buffered SSE payload size exceeds limit {self.limit}, dropping incoming event.")
+                            data_buffer = []
+                            dropped_current_event = True
+                        else:
+                            data_buffer.append(val)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"Error in SSE stream reader: {e}")
         finally:
             self._endpoint_resolved.set()
-            self._server_queue.put_nowait(None)
+            if self._running:
+                try:
+                    # Normal stream termination: await to guarantee EOF sentinel delivery
+                    await self._server_queue.put(None)
+                except asyncio.CancelledError:
+                    try:
+                        self._server_queue.put_nowait(None)
+                    except asyncio.QueueFull:
+                        try:
+                            self._server_queue.get_nowait()
+                            self._server_queue.put_nowait(None)
+                        except Exception:
+                            pass
+                    raise
+                except Exception:
+                    try:
+                        self._server_queue.put_nowait(None)
+                    except asyncio.QueueFull:
+                        try:
+                            self._server_queue.get_nowait()
+                            self._server_queue.put_nowait(None)
+                        except Exception:
+                            pass
+            else:
+                # Explicit shutdown: non-blocking best-effort sentinel delivery
+                try:
+                    self._server_queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    try:
+                        self._server_queue.get_nowait()
+                        self._server_queue.put_nowait(None)
+                    except Exception:
+                        pass

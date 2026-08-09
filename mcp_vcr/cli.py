@@ -14,13 +14,30 @@ from .redactor import Redactor
 
 logger = logging.getLogger("mcp-vcr.cli")
 
-def _resolve_sse_settings(config_path, sse_url, sse_header):
+def _sanitize_url(url: str) -> str:
+    if not url:
+        return ""
+    from urllib.parse import urlparse, urlunparse
+    try:
+        parsed = urlparse(url)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            netloc = netloc.split("@", 1)[1]
+        return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, "", ""))
+    except Exception:
+        return "<REDACTED_URL>"
+
+def _resolve_sse_settings(config_path, sse_url, sse_header, snapshot_path=None):
     from .config import Config, ConfigError
     transport_cfg = {}
     if config_path:
         try:
             cfg = Config.load(config_path)
-            transport_cfg = cfg.raw_data.get("transport", {})
+            if snapshot_path:
+                resolved = cfg.for_snapshot(snapshot_path)
+                transport_cfg = resolved.get("transport", {})
+            else:
+                transport_cfg = cfg.raw_data.get("transport", {})
         except ConfigError as ce:
             click.secho(f"WARNING: Configuration error: {ce}", fg="yellow", err=True)
         except Exception as e:
@@ -126,10 +143,6 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
         click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
         sys.exit(1)
         
-    headers = {}
-    if transport == 'sse':
-        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
-            
     # Determine output folder and filename
     output_path = output if output else Path("sessions")
     
@@ -146,6 +159,16 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
             session_id = secrets.token_hex(4)
             now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             filepath = target_dir / f"session_{now_str}_{session_id}.{ext}"
+
+    # Align filename extension with chosen format
+    if output_format == "ndjson" and filepath.suffix in (".yaml", ".yml"):
+        filepath = filepath.with_suffix(".ndjson")
+    elif output_format == "yaml" and filepath.suffix == ".ndjson":
+        filepath = filepath.with_suffix(".yaml")
+
+    headers = {}
+    if transport == 'sse':
+        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=filepath)
             
     # Validate startup folders
     try:
@@ -168,16 +191,10 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     
     # Sanitize SSE URL for recording metadata (remove credentials/query string)
     recorded_command = args
+    sanitized_sse_url = ""
     if transport == 'sse' and sse_url:
-        from urllib.parse import urlparse, urlunparse
-        try:
-            parsed = urlparse(sse_url)
-            netloc = parsed.netloc
-            if "@" in netloc:
-                netloc = netloc.split("@", 1)[1]
-            recorded_command = [urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, "", ""))]
-        except Exception:
-            recorded_command = [sse_url]
+        sanitized_sse_url = _sanitize_url(sse_url)
+        recorded_command = [sanitized_sse_url]
 
     # Initialize the streaming TranscriptRecorder and MessageInterceptor
     recorder = TranscriptRecorder(filename=str(filepath), server_command=recorded_command, format=output_format)
@@ -196,7 +213,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
             click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
             sys.exit(1)
         transport_inst = SseTransport(sse_url=sse_url, headers=headers)
-        click.secho(f"Starting proxy for SSE server: {sse_url}", fg="cyan", err=True)
+        click.secho(f"Starting proxy for SSE server: {sanitized_sse_url}", fg="cyan", err=True)
     else:
         transport_inst = StdioTransport(args)
         click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
@@ -248,7 +265,7 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
         
     transport_inst = None
     if transport == 'sse' or sse_url:
-        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=Path(session))
         
         SseTransport = None
         try:
@@ -260,7 +277,7 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
             click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
             sys.exit(1)
         transport_inst = SseTransport(sse_url=sse_url, headers=headers)
-        click.secho(f"Starting replay of {session} against SSE server: {sse_url}", fg="cyan", err=True)
+        click.secho(f"Starting replay of {session} against SSE server: {_sanitize_url(sse_url)}", fg="cyan", err=True)
     else:
         if transport == 'stdio' and not args:
             click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
