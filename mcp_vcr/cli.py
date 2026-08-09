@@ -251,6 +251,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
 @click.option('--transport', type=click.Choice(['stdio', 'sse']), default=None, help="Transport protocol (default: from config/stdio).")
 @click.option('--sse-url', type=str, default=None, help="SSE endpoint URL.")
+@click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
 def replay(session, timeout, strict, config, transport, sse_url, sse_header, timing_faithful, server_args):
@@ -650,9 +651,10 @@ def snapshot(session_yaml):
 ))
 @click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
+@click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
 @click.argument('snapshots_dir', type=click.Path(exists=False, file_okay=True, dir_okay=True, path_type=Path))
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def verify(update, timing_faithful, snapshots_dir, server_args):
+def verify(update, timing_faithful, config, snapshots_dir, server_args):
     """Replay a server against its golden snapshots and report regressions.
     
     Example:
@@ -664,7 +666,7 @@ def verify(update, timing_faithful, snapshots_dir, server_args):
         
     from .snapshot import run_verify
     try:
-        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update, timing_faithful=timing_faithful))
+        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update, timing_faithful=timing_faithful, config_path=config))
     except Exception as e:
         click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
         sys.exit(1)

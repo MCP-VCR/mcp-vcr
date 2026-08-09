@@ -101,7 +101,8 @@ async def run_verify(
     snapshots_dir: Path,
     server_args: Optional[List[str]] = None,
     update: bool = False,
-    timing_faithful: Optional[bool] = None
+    timing_faithful: Optional[bool] = None,
+    config_path: Optional[Path] = None
 ) -> int:
     """Replay sessions against a server, diff normalized results vs golden snapshots, and report regressions or update goldens."""
     p_snapshots = Path(snapshots_dir)
@@ -121,7 +122,7 @@ async def run_verify(
         click.secho(f"ERROR: No snapshots found in '{snapshots_dir}'", fg="red", err=True)
         return 1
         
-    engine = ReplayEngine(timing_faithful=timing_faithful)
+    engine = ReplayEngine(config_path=config_path, timing_faithful=timing_faithful)
     
     passed_count = 0
     failed_count = 0
