@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from .validator import validate_file, ValidationError
-from .transport import run_proxy
+from .transports.stdio import run_proxy
 from .interceptor import MessageInterceptor
 from .recorder import TranscriptRecorder
 from .redactor import Redactor
@@ -82,36 +82,69 @@ def validate(path: Path):
 @click.option('--name', type=str, help="Custom session name.")
 @click.option('--no-redact', is_flag=True, help="Disable automatic redaction entirely.")
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
-@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
-def record(output, name, no_redact, config, server_args):
-    """Record an MCP session by proxying traffic to a server subprocess.
-    
-    Example:
-      mcp-vcr record -o sessions/ --name my_session -- python server.py
-    """
+@click.option('--transport', type=click.Choice(['stdio', 'sse']), default='stdio', help="Transport protocol (default: stdio).")
+@click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
+@click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
+@click.option('--format', 'output_format', type=click.Choice(['yaml', 'ndjson']), default='yaml', help="Transcript output format (default: yaml).")
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
+def record(output, name, no_redact, config, transport, sse_url, sse_header, output_format, server_args):
+    """Record an MCP session by proxying traffic to a server."""
     args = list(server_args)
     if args and args[0] == '--':
         args = args[1:]
         
-    if not args:
+    if transport == 'stdio' and not args:
         click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
         sys.exit(1)
         
+    if transport == 'sse' and not sse_url:
+        from .config import Config
+        try:
+            cfg = Config.load(config)
+            transport_cfg = cfg.raw_data.get("transport", {})
+            sse_url = transport_cfg.get("sse_url")
+        except Exception:
+            pass
+            
+        if not sse_url:
+            click.secho("ERROR: --sse-url is required when --transport=sse.", fg="red", err=True)
+            sys.exit(1)
+            
+    # Resolve headers for SSE
+    headers = {}
+    if transport == 'sse':
+        from .config import Config
+        try:
+            cfg = Config.load(config)
+            transport_cfg = cfg.raw_data.get("transport", {})
+            headers = transport_cfg.get("headers", {})
+        except Exception:
+            pass
+            
+        if sse_header:
+            cli_headers = {}
+            for h in sse_header:
+                if ":" in h:
+                    k, v = h.split(":", 1)
+                    cli_headers[k.strip()] = v.strip()
+            headers.update(cli_headers)
+            
     # Determine output folder and filename
     output_path = output if output else Path("sessions")
     
-    if output_path.suffix in (".yaml", ".yml"):
+    ext = "ndjson" if output_format == "ndjson" else "yaml"
+    if output_path.suffix in (".yaml", ".yml", ".ndjson"):
         target_dir = output_path.parent
         filepath = output_path
     else:
         target_dir = output_path
         if name:
-            filename = name if name.endswith((".yaml", ".yml")) else f"{name}.yaml"
+            filename = name if name.endswith((".yaml", ".yml", ".ndjson")) else f"{name}.{ext}"
             filepath = target_dir / filename
         else:
             session_id = secrets.token_hex(4)
             now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            filepath = target_dir / f"session_{now_str}_{session_id}.yaml"
+            filepath = target_dir / f"session_{now_str}_{session_id}.{ext}"
             
     # Validate startup folders
     try:
@@ -132,11 +165,42 @@ def record(output, name, no_redact, config, server_args):
         )
         sys.exit(1)
     
+    # Sanitize SSE URL for recording metadata (remove credentials/query string)
+    recorded_command = args
+    if transport == 'sse' and sse_url:
+        from urllib.parse import urlparse, urlunparse
+        try:
+            parsed = urlparse(sse_url)
+            netloc = parsed.netloc
+            if "@" in netloc:
+                netloc = netloc.split("@", 1)[1]
+            recorded_command = [urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, "", ""))]
+        except Exception:
+            recorded_command = [sse_url]
+
     # Initialize the streaming TranscriptRecorder and MessageInterceptor
-    recorder = TranscriptRecorder(filename=str(filepath), server_command=args)
+    recorder = TranscriptRecorder(filename=str(filepath), server_command=recorded_command, format=output_format)
     interceptor = MessageInterceptor(recorder=recorder, redactor=redactor)
     
-    click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
+    # Initialize transport instance
+    try:
+        from .transports import SseTransport
+        sse_transport_available = True
+    except ImportError:
+        sse_transport_available = False
+
+    from .transports import StdioTransport, run_proxy_with_transport
+    if transport == 'sse':
+        if not sse_transport_available:
+            click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
+            sys.exit(1)
+        from .transports import SseTransport
+        transport_inst = SseTransport(sse_url=sse_url, headers=headers)
+        click.secho(f"Starting proxy for SSE server: {sse_url}", fg="cyan", err=True)
+    else:
+        transport_inst = StdioTransport(args)
+        click.secho(f"Starting proxy for server: {' '.join(args)}", fg="cyan", err=True)
+        
     click.secho(f"Recording to: {recorder.filepath}", fg="cyan", err=True)
     
     try:
@@ -147,11 +211,11 @@ def record(output, name, no_redact, config, server_args):
 
     exit_code = 1
     try:
-        exit_code = asyncio.run(run_proxy(args, interceptor=interceptor, recorder=recorder))
+        exit_code = asyncio.run(run_proxy_with_transport(transport_inst, interceptor=interceptor, recorder=recorder))
     except Exception as e:
         import traceback
         traceback.print_exc()
-        click.secho(f"ERROR: Proxy failed: {e}. What to try: check server executable path and arguments.", fg="red", err=True)
+        click.secho(f"ERROR: Proxy failed: {e}.", fg="red", err=True)
     finally:
         try:
             recorder.close()
@@ -166,12 +230,15 @@ def record(output, name, no_redact, config, server_args):
     allow_extra_args=True,
 ))
 @click.argument('session', type=click.Path(exists=True, path_type=Path))
-@click.option('--timeout', type=int, default=5000, help="Timeout in milliseconds per request (default: 5000).")
+@click.option('--timeout', type=int, default=None, help="Timeout in milliseconds per request (default: 5000).")
 @click.option('--strict', is_flag=True, help="Exit 1 if any response differs from the original transcript.")
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
-@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
-def replay(session, timeout, strict, config, server_args):
-    """Replay an MCP session against a server subprocess.
+@click.option('--transport', type=click.Choice(['stdio', 'sse']), default=None, help="Transport protocol (default: from config/stdio).")
+@click.option('--sse-url', type=str, default=None, help="SSE endpoint URL.")
+@click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
+def replay(session, timeout, strict, config, transport, sse_url, sse_header, timing_faithful, server_args):
+    """Replay an MCP session against a server.
     
     Example:
       mcp-vcr replay sessions/my_session.yaml --timeout 5000 -- python server.py
@@ -180,21 +247,67 @@ def replay(session, timeout, strict, config, server_args):
     if args and args[0] == '--':
         args = args[1:]
         
-    if not args:
-        click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
-        sys.exit(1)
+    transport_inst = None
+    if transport == 'sse' or sse_url:
+        from .config import Config
+        headers = {}
+        try:
+            cfg = Config.load(config)
+            headers = cfg.raw_data.get("transport", {}).get("headers", {})
+        except Exception:
+            pass
+            
+        if sse_header:
+            cli_headers = {}
+            for h in sse_header:
+                if ":" in h:
+                    k, v = h.split(":", 1)
+                    cli_headers[k.strip()] = v.strip()
+            headers.update(cli_headers)
+            
+        if not sse_url:
+            try:
+                cfg = Config.load(config)
+                sse_url = cfg.raw_data.get("transport", {}).get("sse_url")
+            except Exception:
+                pass
+                
+        if not sse_url:
+            click.secho("ERROR: --sse-url is required when --transport=sse.", fg="red", err=True)
+            sys.exit(1)
+            
+        try:
+            from .transports import SseTransport
+            sse_transport_available = True
+        except ImportError:
+            sse_transport_available = False
+
+        if not sse_transport_available:
+            click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
+            sys.exit(1)
+        from .transports import SseTransport
+        transport_inst = SseTransport(sse_url=sse_url, headers=headers)
+        click.secho(f"Starting replay of {session} against SSE server: {sse_url}", fg="cyan", err=True)
+    else:
+        if transport == 'stdio' and not args:
+            click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
+            sys.exit(1)
+        if args:
+            from .transports import StdioTransport
+            transport_inst = StdioTransport(args, read_stdin=False)
+            click.secho(f"Starting replay of {session} against server: {' '.join(args)}", fg="cyan", err=True)
+        else:
+            click.secho(f"Starting replay of {session} (using transport settings from config or transcript)", fg="cyan", err=True)
         
     from .replay import ReplayEngine
     try:
-        engine = ReplayEngine(config_path=config, timeout_ms=timeout)
+        engine = ReplayEngine(config_path=config, timeout_ms=timeout, timing_faithful=timing_faithful)
     except Exception as e:
         click.secho(f"ERROR: Configuration error: {e}. What to try: check the validity of your configuration file or options.", fg="red", err=True)
         sys.exit(1)
         
-    click.secho(f"Starting replay of {session} against server: {' '.join(args)}", fg="cyan", err=True)
-    
     try:
-        output_path = asyncio.run(engine.run_replay(session, server_args=args))
+        output_path = asyncio.run(engine.run_replay(session, server_args=args if not transport_inst else None, transport=transport_inst))
         
         # Check if the output has incomplete: true in meta
         with open(output_path, "r", encoding="utf-8") as f:
@@ -227,9 +340,10 @@ def replay(session, timeout, strict, config, server_args):
     ignore_unknown_options=True,
     allow_extra_args=True,
 ))
+@click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.argument('session_glob', type=str)
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
-def check(session_glob, server_args):
+def check(session_glob, timing_faithful, server_args):
     """Replay a glob of sessions against a server and exit 1 on regression/failure.
     
     Example:
@@ -259,7 +373,7 @@ def check(session_glob, server_args):
     from .diff import run_diff, format_text_diff
     
     try:
-        engine = ReplayEngine()
+        engine = ReplayEngine(timing_faithful=timing_faithful)
     except Exception as e:
         click.secho(
             f"ERROR: Configuration error: {e}. "
@@ -545,9 +659,10 @@ def snapshot(session_yaml):
     allow_extra_args=True,
 ))
 @click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
+@click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.argument('snapshots_dir', type=click.Path(exists=False, file_okay=True, dir_okay=True, path_type=Path))
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def verify(update, snapshots_dir, server_args):
+def verify(update, timing_faithful, snapshots_dir, server_args):
     """Replay a server against its golden snapshots and report regressions.
     
     Example:
@@ -559,7 +674,7 @@ def verify(update, snapshots_dir, server_args):
         
     from .snapshot import run_verify
     try:
-        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update))
+        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update, timing_faithful=timing_faithful))
     except Exception as e:
         click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
         sys.exit(1)

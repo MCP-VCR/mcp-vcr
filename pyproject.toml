@@ -13,6 +13,11 @@ dependencies = [
 ]
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+sse = [
+    "aiohttp>=3.9.0"
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
@@ -26,6 +31,10 @@ mcp-vcr = "mcp_vcr.cli:main"
 testpaths = ["tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
+pythonpath = [
+  ".",
+  "plugins/pytest-mcp-vcr"
+]
 
 [tool.setuptools]
 packages = ["mcp_vcr", "mcp_vcr.schemas"]

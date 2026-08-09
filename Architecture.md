@@ -113,37 +113,41 @@ When run with `--update`, if changes are detected, it reconstructs a full transc
 
 ## Transport layer and framing
 
-MCP over stdio uses **newline-delimited JSON** (NDJSON). Each message is a single JSON object terminated by `\n`. There is no length prefix or envelope framing.
+MCP supports two official transport layers: **stdio** (newline-delimited JSON) and **HTTP/Server-Sent Events (SSE)**.
 
-This sounds simple but has practical complications:
+### Transport Abstraction
+
+`mcp-vcr` abstracts these details behind the `Transport` protocol:
+
+- `start()`: Establishes connections and launches subprocesses.
+- `shutdown()`: Closes sessions and terminates tasks.
+- `read_client_message()`: Reads from the client side.
+- `write_to_client(data)`: Writes back to the client.
+- `read_server_message()`: Reads from the server side.
+- `write_to_server(data)`: Writes to the server.
+
+There are two primary implementations:
+1. **StdioTransport**: Manages standard input/output pipes of a local subprocess. Supports disabling active stdin pipe hooks in replay mode.
+2. **SseTransport**: Manages connection to an HTTP/SSE endpoint, dynamic endpoint resolution via the `endpoint` SSE event, and queue-based correlation of asynchronous Server-Sent Events.
+
+### Transcript Format & Sniffing
+
+To support large sessions, `mcp-vcr` supports two formats:
+- **YAML**: Human-readable, git-diffable default.
+- **NDJSON**: Newline-delimited JSON. Best for large-session streaming.
+
+The `formats` module provides:
+- `detect_format(path)`: Sniffs the file contents to automatically identify the format.
+- `iter_messages(path)`: Iteratively streams messages with minimal memory overhead.
+- `load_meta(path)`: Fast, lazy metadata parsing.
 
 ### Partial reads
 
-`asyncio`'s `StreamReader.readline()` handles this correctly — it buffers internally and only returns when `\n` is seen. However, the underlying pipe might deliver data in arbitrary chunks. The implementation must not use `read(n)` with a fixed buffer size.
-
-**Correct approach:**
-
-```python
-async def read_messages(reader: asyncio.StreamReader):
-    async for line in reader:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            message = json.loads(line)
-            yield message
-        except json.JSONDecodeError as e:
-            # Log and skip malformed lines — never crash the proxy
-            log.warning(f"Malformed JSON line: {e}")
-```
+`asyncio`'s `StreamReader.readline()` handles stdio buffering. SseTransport relies on `aiohttp` SSE streams to parse incoming events.
 
 ### Large messages
 
-Tool responses can be large (base64-encoded images, large text blobs). `asyncio.StreamReader` has a default buffer limit of 64KB. This must be raised:
-
-```python
-reader = asyncio.StreamReader(limit=16 * 1024 * 1024)  # 16MB
-```
+Tool responses can be large (base64-encoded images, large text blobs). `asyncio.StreamReader` has a default buffer limit of 64KB. This is raised to 16MB by default.
 
 ### Notifications vs requests vs responses
 
@@ -270,35 +274,29 @@ The session ID is a random 8-character hex string, not a content hash. This is i
 
 ## Replay engine
 
-The replay engine reads a transcript, extracts all `c2s` messages in order, and feeds them into the server subprocess.
+The replay engine reads a transcript, extracts all `c2s` messages in order, and feeds them into the server using the active transport.
 
 ### Basic replay loop
 
 ```python
-async def replay(transcript_path: Path, server_args: list[str]) -> None:
+async def replay(transcript_path: Path, transport: Transport) -> None:
     transcript = load_transcript(transcript_path)
-    server = await asyncio.create_subprocess_exec(
-        *server_args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-    )
+    await transport.start()
 
     client_messages = [m for m in transcript.messages if m.dir == Direction.C2S]
     response_recorder = TranscriptRecorder(derive_output_path(transcript_path))
 
     for msg in client_messages:
         line = json.dumps(msg.payload, sort_keys=True) + "\n"
-        server.stdin.write(line.encode())
-        await server.stdin.drain()
+        await transport.write_to_server(line.encode("utf-8"))
 
-        response_line = await server.stdout.readline()
-        response = json.loads(response_line)
+        response_bytes = await transport.read_server_message()
+        response = json.loads(response_bytes.decode("utf-8"))
         response_recorder.write(InterceptedMessage(
             t=..., dir=Direction.S2C, payload=response
         ))
 
-    server.stdin.close()
-    await server.wait()
+    await transport.shutdown()
 ```
 
 ### Notification handling
@@ -311,11 +309,9 @@ This creates a subtle ordering problem: if a notification is followed by a reque
 
 Each request waits for a response with a configurable timeout (default 5000ms). If the server doesn't respond in time, the replay is considered failed and the session is written with an error marker.
 
-### Timing-agnostic vs timing-faithful
+### Timing-faithful replay
 
-The current implementation is **timing-agnostic**: messages are sent as fast as the server responds, ignoring the `t` values in the transcript.
-
-**Timing-faithful replay** (planned) would insert `asyncio.sleep` delays based on the `t` delta between consecutive c2s messages. This matters for servers with timeout-sensitive logic (e.g., a server that expects a follow-up request within N seconds). It is a future feature because most servers are stateless between requests and timing doesn't affect behavior.
+`mcp-vcr` supports timing-faithful replay. When enabled (via `--timing-faithful` CLI flag or `timing_faithful` config key), the engine computes the delay delta between the current message and the previous one (`t_i - t_{i-1}`) and calls `asyncio.sleep` before writing the request. This allows accurate simulation of connection timing and rate limit boundaries.
 
 ---
 
@@ -499,10 +495,6 @@ On some platforms, writing to stdout while the client isn't reading can block th
 ### Rust transport core
 
 The current Python asyncio implementation is correct and fast enough for development use. For high-throughput scenarios (large binary responses, many concurrent sessions), the transport layer (framing, pipe pumps) could be rewritten in Rust and exposed via PyO3. The Python recorder and diff engine would remain Python.
-
-### Timing-faithful replay
-
-See [Replay engine](#replay-engine). Implementation would insert `asyncio.sleep(delta_ms / 1000)` between c2s messages using the `t` values from the transcript.
 
 ### Fuzz mode
 

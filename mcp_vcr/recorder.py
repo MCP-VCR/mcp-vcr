@@ -1,18 +1,20 @@
+import json
 import os
 import secrets
 import sys
 import yaml
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 class TranscriptRecorder:
     """
     TranscriptRecorder handles the incremental serialization of intercepted messages
-    to a stable-keyed YAML file, supporting lazy meta backfilling and crash robustness.
+    to a stable-keyed YAML or NDJSON file, supporting lazy meta backfilling and crash robustness.
     """
-    def __init__(self, filename: Optional[str] = None, server_command: Optional[List[str]] = None):
+    def __init__(self, filename: Optional[str] = None, server_command: Optional[List[str]] = None, format: Literal["yaml", "ndjson"] = "yaml"):
         self.session_id = secrets.token_hex(4)  # Unique 8-character hex
+        self.format = format
         raw_command = server_command or []
         self.server_command = []
         for arg in raw_command:
@@ -35,7 +37,8 @@ class TranscriptRecorder:
             self.filepath = Path(filename)
         else:
             now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            self.filepath = Path(f"sessions/session_{now_str}_{self.session_id}.yaml")
+            ext = "ndjson" if self.format == "ndjson" else "yaml"
+            self.filepath = Path(f"sessions/session_{now_str}_{self.session_id}.{ext}")
             
         # Automatically create the parent directories
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -43,12 +46,11 @@ class TranscriptRecorder:
 
     def start_session(self) -> None:
         """
-        Open the transcript file and write the initial meta header and messages key.
+        Open the transcript file and write the initial meta header.
         """
         fd = os.open(self.filepath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         self.file_handle = os.fdopen(fd, "w", encoding="utf-8")
         
-        # Write initial YAML headers deterministically
         meta_dict = {
             "version": 1,
             "recorded_at": self.recorded_at,
@@ -57,14 +59,17 @@ class TranscriptRecorder:
             "schema_version": "1.0"
         }
         
-        initial_doc = {
-            "meta": meta_dict
-        }
-        
-        # Dump meta and then output messages: key
-        meta_yaml = yaml.safe_dump(initial_doc, sort_keys=True, default_flow_style=False)
-        self.file_handle.write(meta_yaml)
-        self.file_handle.write("messages:\n")
+        if self.format == "ndjson":
+            meta_line = {"_type": "meta", **meta_dict}
+            self.file_handle.write(json.dumps(meta_line) + "\n")
+        else:
+            initial_doc = {
+                "meta": meta_dict
+            }
+            meta_yaml = yaml.safe_dump(initial_doc, sort_keys=True, default_flow_style=False)
+            self.file_handle.write(meta_yaml)
+            self.file_handle.write("messages:\n")
+            
         self.file_handle.flush()
 
     def write(self, msg: Dict[str, Any]) -> None:
@@ -74,16 +79,18 @@ class TranscriptRecorder:
         if not self.file_handle:
             return
             
-        # Build message record
         item = {
             "t": msg["t"],
             "dir": msg["dir"],
             "payload": msg["payload"]
         }
         
-        # Safe serialize one list item
-        yaml_str = yaml.safe_dump([item], sort_keys=True, default_flow_style=False)
-        self.file_handle.write(yaml_str)
+        if self.format == "ndjson":
+            self.file_handle.write(json.dumps(item) + "\n")
+        else:
+            yaml_str = yaml.safe_dump([item], sort_keys=True, default_flow_style=False)
+            self.file_handle.write(yaml_str)
+            
         self.file_handle.flush()
 
     def update_lazy_metadata(self, client_hint: Optional[str] = None, protocol_version: Optional[str] = None) -> None:
@@ -110,32 +117,63 @@ class TranscriptRecorder:
             if not self.filepath.exists():
                 return
                 
-            with open(self.filepath, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-                
-            if not data or "meta" not in data:
-                return
-                
-            # Populate lazy fields if captured and not already present
-            changed = False
-            if self.protocol_version:
-                if "protocol_version" not in data["meta"]:
-                    data["meta"]["protocol_version"] = self.protocol_version
-                    changed = True
-            if self.client_hint:
-                if "client_hint" not in data["meta"]:
-                    data["meta"]["client_hint"] = self.client_hint
-                    changed = True
+            if self.format == "ndjson":
+                import tempfile
+                temp_dir = self.filepath.parent
+                with open(self.filepath, "r", encoding="utf-8") as f_in:
+                    first_line = f_in.readline()
+                    if not first_line:
+                        return
+                    try:
+                        meta = json.loads(first_line)
+                        if meta.get("_type") == "meta":
+                            changed = False
+                            if self.protocol_version and "protocol_version" not in meta:
+                                meta["protocol_version"] = self.protocol_version
+                                changed = True
+                            if self.client_hint and "client_hint" not in meta:
+                                meta["client_hint"] = self.client_hint
+                                changed = True
+                                
+                            if changed:
+                                fd, temp_path = tempfile.mkstemp(dir=temp_dir, prefix="mcp_vcr_backfill_")
+                                with os.fdopen(fd, "w", encoding="utf-8") as f_out:
+                                    f_out.write(json.dumps(meta) + "\n")
+                                    while True:
+                                        chunk = f_in.read(1024 * 1024)
+                                        if not chunk:
+                                            break
+                                        f_out.write(chunk)
+                                os.replace(temp_path, self.filepath)
+                    except Exception as je:
+                        sys.stderr.write(f"Warning: Failed to backfill NDJSON metadata: {je}\n")
+            else:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    
+                if not data or "meta" not in data:
+                    return
+                    
+                # Populate lazy fields if captured and not already present
+                changed = False
+                if self.protocol_version:
+                    if "protocol_version" not in data["meta"]:
+                        data["meta"]["protocol_version"] = self.protocol_version
+                        changed = True
+                if self.client_hint:
+                    if "client_hint" not in data["meta"]:
+                        data["meta"]["client_hint"] = self.client_hint
+                        changed = True
 
-            # Don't rewrite if no lazy fields were set
-            if not changed:
-                return
-                
-            # Rewrite fully populated, deterministic transcript with stable key ordering
-            fd = os.open(self.filepath, os.O_WRONLY | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, sort_keys=True, default_flow_style=False)
-                
+                # Don't rewrite if no lazy fields were set
+                if not changed:
+                    return
+                    
+                # Rewrite fully populated, deterministic transcript with stable key ordering
+                fd = os.open(self.filepath, os.O_WRONLY | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(data, f, sort_keys=True, default_flow_style=False)
+                    
         except Exception as e:
             # Safe catch to ensure close doesn't crash normal exit
             sys.stderr.write(f"Warning: Failed to backfill metadata: {e}\n")

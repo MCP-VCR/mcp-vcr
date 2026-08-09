@@ -1,0 +1,59 @@
+name: 'MCP-VCR Verify Action'
+description: 'Verify MCP server snapshots in CI/CD pipeline'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+inputs:
+  snapshots-dir:
+    description: 'Path to directory containing golden snapshots'
+    required: true
+    default: 'snapshots'
+  server-command:
+    description: 'Command to run the server subprocess'
+    required: true
+  config:
+    description: 'Path to .mcp-vcr.yaml configuration file'
+    required: false
+  timing-faithful:
+    description: 'Enable timing-faithful replay'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@82c7e631dfb9861178db33a406550b73c4d7ec6b # v5.1.0
+      with:
+        python-version: '3.12'
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@f724c812efb88544f4ee5134c005086469b2a647 # v5.3.0
+
+    - name: Install mcp-vcr
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv tool install mcp-vcr==0.1.5
+
+    - name: Verify Snapshots
+      shell: bash
+      env:
+        SNAPSHOTS_DIR: ${{ inputs.snapshots-dir }}
+        SERVER_COMMAND: ${{ inputs.server-command }}
+        CONFIG_PATH: ${{ inputs.config }}
+        TIMING_FAITHFUL: ${{ inputs.timing-faithful }}
+      run: |
+        set -euo pipefail
+        ARGS=()
+        if [ -n "$CONFIG_PATH" ]; then
+          ARGS+=("--config" "$CONFIG_PATH")
+        fi
+        if [ "$TIMING_FAITHFUL" = "true" ]; then
+          ARGS+=("--timing-faithful")
+        fi
+        
+        # Safely parse the server command string into a bash array without eval
+        read -r -a CMD_ARRAY <<< "$SERVER_COMMAND"
+        
+        echo "Verifying snapshots under $SNAPSHOTS_DIR..."
+        mcp-vcr verify "${ARGS[@]}" "$SNAPSHOTS_DIR" -- "${CMD_ARRAY[@]}"

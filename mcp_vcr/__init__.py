@@ -10,13 +10,26 @@ from .normalizer import (
     UuidNormalizer,
     CursorNormalizer
 )
-from .transport import (
+from .config import Config, ConfigError
+from .formats import detect_format, iter_messages, load_meta
+from .transports import (
+    Transport,
+    StdioTransport,
+    run_proxy_with_transport,
+)
+
+def __getattr__(name: str):
+    if name == "SseTransport":
+        from .transports import SseTransport
+        return SseTransport
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+from .transports.stdio import (
     get_stdin_reader,
     launch_server,
     pump_c2s,
     pump_s2c,
     pump_stderr,
-    run_proxy
+    run_proxy,
 )
 from .replay import ReplayEngine
 
@@ -35,6 +48,15 @@ __all__ = [
     "RequestIdNormalizer",
     "UuidNormalizer",
     "CursorNormalizer",
+    "Config",
+    "ConfigError",
+    "detect_format",
+    "iter_messages",
+    "load_meta",
+    "Transport",
+    "StdioTransport",
+    "SseTransport",
+    "run_proxy_with_transport",
     "get_stdin_reader",
     "launch_server",
     "pump_c2s",
