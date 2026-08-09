@@ -17,18 +17,51 @@ def load_schema() -> Dict[str, Any]:
     _SCHEMA_CACHE = json.loads(schema_content)
     return _SCHEMA_CACHE
 
+def load_transcript_data(file_path: Path) -> Dict[str, Any]:
+    """Load transcript data dynamically supporting both YAML and NDJSON."""
+    from .formats import detect_format
+    fmt = detect_format(file_path)
+    if fmt == "ndjson":
+        meta = {}
+        messages = []
+        malformed_lines = []
+        with open(file_path, "r", encoding="utf-8") as f:
+            for idx, line in enumerate(f, start=1):
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                try:
+                    obj = json.loads(line_str)
+                    if not isinstance(obj, dict):
+                        # Treat non-dict lines as malformed json structures
+                        malformed_lines.append((idx, "Line is not a JSON object"))
+                        continue
+                    if obj.get("_type") == "meta":
+                        meta = dict(obj)
+                        meta.pop("_type", None)
+                    else:
+                        messages.append(obj)
+                except json.JSONDecodeError as e:
+                    malformed_lines.append((idx, str(e)))
+        if malformed_lines:
+            errors_str = ", ".join(f"line {idx}: {err}" for idx, err in malformed_lines)
+            raise ValueError(f"Malformed NDJSON transcript: {errors_str}")
+        return {"meta": meta, "messages": messages}
+    else:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
 def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
     """
-    Validate a transcript YAML file against the v1 schema.
+    Validate a transcript file against the v1 schema.
     Returns a list of dictionaries with 'loc' and 'msg'. If valid, returns empty list.
     """
     errors = []
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            transcript = yaml.safe_load(f)
+        transcript = load_transcript_data(file_path)
             
         if transcript is None:
-            return [{"loc": ("transcript",), "msg": "Transcript is empty or invalid YAML"}]
+            return [{"loc": ("transcript",), "msg": "Transcript is empty or invalid"}]
             
         schema = load_schema()
         validator = jsonschema.Draft7Validator(schema)
@@ -42,6 +75,8 @@ def validate_transcript(file_path: Path) -> List[Dict[str, Any]]:
             
     except yaml.YAMLError as e:
         errors.append({"loc": ("yaml",), "msg": f"YAML Syntax Error: {e}"})
+    except ValueError as e:
+        errors.append({"loc": ("ndjson",), "msg": str(e)})
     except FileNotFoundError:
         errors.append({"loc": ("file",), "msg": f"File not found: {file_path}"})
     except (OSError, UnicodeDecodeError) as e:
@@ -54,11 +89,10 @@ def validate_file(file_path: Path, allow_v0: bool = True) -> Transcript:
     Raises pydantic.ValidationError if any issues are found.
     On success, returns the parsed Pydantic Transcript model.
     """
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    data = load_transcript_data(file_path)
         
     if data is None:
-        raise ValueError("Transcript is empty or invalid YAML")
+        raise ValueError("Transcript is empty or invalid")
         
     if not isinstance(data, dict):
         raise ValueError("Transcript top-level structure must be a dictionary")

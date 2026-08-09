@@ -1,6 +1,6 @@
 [project]
 name = "mcp-vcr"
-version = "0.1.5"
+version = "0.2.0"
 description = "A deterministic, replayable, human-readable MCP transcript format and proxy."
 authors = [
     { name = "mcp-vcr contributors" }
@@ -12,6 +12,11 @@ dependencies = [
     "jsonschema>=4.20.0",
 ]
 requires-python = ">=3.12"
+
+[project.optional-dependencies]
+sse = [
+    "aiohttp>=3.9.0"
+]
 
 [dependency-groups]
 dev = [
@@ -26,9 +31,13 @@ mcp-vcr = "mcp_vcr.cli:main"
 testpaths = ["tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
+pythonpath = [
+  ".",
+  "plugins/pytest-mcp-vcr"
+]
 
 [tool.setuptools]
-packages = ["mcp_vcr", "mcp_vcr.schemas"]
+packages = ["mcp_vcr", "mcp_vcr.schemas", "mcp_vcr.transports"]
 
 [tool.setuptools.package-data]
 mcp_vcr = ["schemas/transcript-schema-v1.json"]

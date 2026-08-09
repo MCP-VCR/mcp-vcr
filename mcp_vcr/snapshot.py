@@ -84,23 +84,23 @@ def run_snapshot(session_yaml_path: Path) -> Path:
     
     # Write full, deterministic transcript with stable key ordering
     temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
-    with open(temp_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(normalized_data, f, sort_keys=True, default_flow_style=False)
-
     try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(normalized_data, f, sort_keys=True, default_flow_style=False)
         validate_file(temp_path)
+        temp_path.replace(golden_path)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
-
-    temp_path.replace(golden_path)
     
     return golden_path
 
 async def run_verify(
     snapshots_dir: Path,
     server_args: Optional[List[str]] = None,
-    update: bool = False
+    update: bool = False,
+    timing_faithful: Optional[bool] = None,
+    config_path: Optional[Path] = None
 ) -> int:
     """Replay sessions against a server, diff normalized results vs golden snapshots, and report regressions or update goldens."""
     p_snapshots = Path(snapshots_dir)
@@ -120,7 +120,7 @@ async def run_verify(
         click.secho(f"ERROR: No snapshots found in '{snapshots_dir}'", fg="red", err=True)
         return 1
         
-    engine = ReplayEngine()
+    engine = ReplayEngine(config_path=config_path, timing_faithful=timing_faithful)
     
     passed_count = 0
     failed_count = 0
@@ -182,14 +182,14 @@ async def run_verify(
                     
                     # Overwrite golden file
                     temp_path = golden_path.with_name(f".{golden_path.name}.tmp")
-                    with open(temp_path, "w", encoding="utf-8") as f:
-                        yaml.safe_dump(new_golden_data, f, sort_keys=True, default_flow_style=False)
                     try:
+                        with open(temp_path, "w", encoding="utf-8") as f:
+                            yaml.safe_dump(new_golden_data, f, sort_keys=True, default_flow_style=False)
                         validate_file(temp_path)
+                        temp_path.replace(golden_path)
                     except Exception:
                         temp_path.unlink(missing_ok=True)
                         raise
-                    temp_path.replace(golden_path)
                     results[golden_path] = ("updated", "Golden snapshot updated with new replayed responses", None)
                     updated_count += 1
                 else:

@@ -20,7 +20,7 @@ class Redactor:
     Redactor replaces values of known sensitive fields, patterns, and filesystem paths
     in JSON-RPC payloads before recording them in transcripts.
     """
-    def __init__(self, config_path: Optional[Path] = None, enabled: bool = True):
+    def __init__(self, config_path: Optional[Path] = None, enabled: bool = True, snapshot_path: Optional[Path] = None):
         self.enabled = enabled
         self.sensitive_fields: Set[str] = set(DEFAULT_FIELDS)
         self.compiled_patterns: List[re.Pattern] = []
@@ -35,26 +35,19 @@ class Redactor:
         self.windows_path_re = re.compile(r"^[a-zA-Z]:\\")
         
         # Load custom configuration from default or custom path
-        self._load_config(config_path)
+        self._load_config(config_path, snapshot_path)
 
-    def _load_config(self, config_path: Optional[Path] = None) -> None:
-        if config_path is None:
-            config_path = Path.cwd() / ".mcp-vcr.yaml"
-            
-        if not config_path.exists():
-            return
-            
+    def _load_config(self, config_path: Optional[Path] = None, snapshot_path: Optional[Path] = None) -> None:
+        from .config import Config, ConfigError
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
-        except (yaml.YAMLError, OSError) as e:
-            logger.warning(f"Failed to load configuration file {config_path}: {e}")
+            config = Config.load(config_path)
+            redact_cfg = config.redact_config(snapshot_path)
+        except ConfigError:
+            raise
+        except Exception as e:
+            logger.warning(f"Failed to load configuration: {e}")
             return
             
-        if not isinstance(config, dict):
-            return
-            
-        redact_cfg = config.get("redact")
         if not isinstance(redact_cfg, dict):
             return
             

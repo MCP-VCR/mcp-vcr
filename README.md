@@ -23,11 +23,14 @@ It sits cleanly between an MCP client (such as Claude Desktop, Cursor, Windsurf,
 
 ### Key Capabilities
 
-*   **Deterministic Replay**: Replay recorded client commands against your server and automatically match responses by JSON-RPC `id` values.
-*   **Golden Snapshots**: Strips out non-deterministic noise (timestamps, UUIDs, request/response IDs, page cursors, local paths) to form a reproducible, byte-identical contract test suite.
-*   **In-Flight Redaction**: Walks message payloads recursively to scrub credentials, OpenAI keys, bearer tokens, passwords, and absolute user directory paths *before* writing transcripts to your disk.
-*   **Layered Diff Engines**: Spot structural schema drift, type changes, or value regressions using `--structural`, `--semantic`, or `--strict` diffing options.
-*   **CI-Native Checking**: Verify your whole server against dozens of snapshots with a single command; exits with code `0` on success or code `1` on regression.
+*   **Dual Transports (Stdio & HTTP/SSE)**: Intercept, proxy, and replay messages over standard input/output pipes or HTTP/Server-Sent Events (SSE) networks.
+*   **Deterministic & Timing-Faithful Replay**: Replay client requests and match server responses. Optionally sleep for exact recorded intervals (`--timing-faithful`) to validate timing-sensitive logic.
+*   **Golden Snapshots**: Strip non-deterministic noise (timestamps, IDs, UUIDs, absolute paths) to establish a byte-identical contract test suite.
+*   **In-Flight Redaction**: Recursively inspects and scrubs secrets (keys, bearer tokens, passwords) before writing files to disk.
+*   **Streaming Large-Session Support**: Switch format to newline-delimited JSON (`--format ndjson`) to stream massive conversations with minimal memory footprint.
+*   **Layered Diff Engines**: Compare schema structures (`--structural`), semantics (`--semantic`), or exact matching (`--strict`).
+*   **Pytest Integration**: Build automated test suites with the first-party `pytest-mcp-vcr` plugin.
+*   **CI-Native Checking**: Verify server functionality in CI with zero shell injection risks using our official composite GitHub Action.
 
 ---
 
@@ -146,22 +149,16 @@ redact:
 
 ## What Lies Ahead (Roadmap)
 
-We are laser-focused on keeping our **versioned, deterministic transcript core** stable and backward-compatible. The following major capabilities are scheduled for implementation:
+We are laser-focused on keeping our core stable and backward-compatible. The following major capabilities are scheduled for the next phases:
 
-### 1. Timing-Faithful Replay
-Optionally use the recorded `t` relative millisecond values from the transcript to insert deterministic `asyncio.sleep` pauses between client-to-server (`c2s`) messages. Crucial for verifying servers with timeout-sensitive states.
-
-### 2. Fuzz Testing Mode
+### 1. Fuzz Testing Mode
 Add `mcp-vcr fuzz` to replay recorded snapshots with randomized mutations (truncated payloads, type confusion, missing required schema fields, and boundary values) to audit server error handling and crash resistance.
 
-### 3. MCP Inspector Integration
+### 2. MCP Inspector Integration
 Coordinating with the MCP community to support loading `mcp-vcr` transcripts directly into the official MCP Inspector web interface for timeline visualization, message inspection, and interactive debugging.
 
-### 4. Compatibility Matrix Report
+### 3. Compatibility Matrix Report
 Record and diff identical session exchanges across major MCP client runtimes (Claude Desktop, Cursor, Windsurf, etc.) to generate a public compatibility matrix, letting authors prove their servers work flawlessly across the client ecosystem.
-
-### 5. HTTP/SSE Recording
-Extending the stdio proxy architecture to support recording and replaying **HTTP/Server-Sent Events (SSE)**, the second official MCP transport layer.
 
 ---
 

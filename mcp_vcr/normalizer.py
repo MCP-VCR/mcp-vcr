@@ -170,19 +170,13 @@ class NormalizerChain:
         Factory method to load configuration from .mcp-vcr.yaml in the project root,
         validate keys, toggle active normalizers, and construct the NormalizerChain.
         """
-        if config_path is None:
-            config_path = Path.cwd() / ".mcp-vcr.yaml"
-            
-        normalize_cfg = {}
-        if config_path.exists():
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config = yaml.safe_load(f)
-            except (OSError, yaml.YAMLError) as e:
-                logger.warning("Failed to load configuration file %s: %s", config_path, e)
-                config = None
-            if isinstance(config, dict):
-                normalize_cfg = config.get("normalize", {})
+        from .config import Config
+        try:
+            config = Config.load(config_path)
+            normalize_cfg = config.normalize_config()
+        except Exception as e:
+            logger.warning(f"Failed to load configuration: {e}")
+            normalize_cfg = {}
                 
         # Validate keys in the configuration
         valid_keys = {"timestamps", "request_ids", "uuids", "cursors"}
