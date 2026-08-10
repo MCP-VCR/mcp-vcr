@@ -6,6 +6,7 @@ import secrets
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 from .validator import validate_file, ValidationError
 from .transports.stdio import run_proxy
 from .interceptor import MessageInterceptor
@@ -672,5 +673,235 @@ def verify(update, timing_faithful, config, snapshots_dir, server_args):
         sys.exit(1)
     sys.exit(exit_code)
 
+async def run_generate(
+    args: list[str],
+    output: Optional[Path],
+    name: Optional[str],
+    transport: str,
+    sse_url: Optional[str],
+    headers: dict,
+    timeout: int,
+    yes: bool,
+    no_call: bool,
+    dry_run: bool,
+    config: Optional[Path]
+) -> int:
+    SseTransport = None
+    if transport == 'sse':
+        try:
+            from .transports import SseTransport
+        except ImportError:
+            pass
+        if SseTransport is None:
+            click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
+            return 1
+        transport_inst = SseTransport(sse_url=sse_url, headers=headers)
+        server_display = _sanitize_url(sse_url)
+    else:
+        from .transports import StdioTransport
+        transport_inst = StdioTransport(args, read_stdin=False)
+        server_display = ' '.join(args)
+
+    click.secho(f"Discovering tools from server: {server_display}", fg="cyan", err=True)
+
+    from .generator import GeneratorEngine, ToolCallResult
+    engine = GeneratorEngine(config_path=config)
+
+    try:
+        discovery = await engine.discover(transport_inst, timeout_ms=timeout)
+    except Exception as e:
+        click.secho(f"ERROR: Tool discovery failed: {e}", fg="red", err=True)
+        await transport_inst.shutdown()
+        return 1
+
+    server_info = discovery.server_info
+    server_name = server_info.get("name", "server") if isinstance(server_info, dict) else "server"
+    server_ver = server_info.get("version", "") if isinstance(server_info, dict) else ""
+    server_info_str = f"{server_name} v{server_ver}".strip() if server_ver else server_name
+
+    click.secho(f"✓ initialize: {server_info_str} (protocol: {discovery.protocol_version})", fg="green", err=True)
+    click.secho(f"✓ tools/list: {len(discovery.tools)} tools discovered", fg="green", err=True)
+
+    for tool in discovery.tools:
+        t_name = tool.get("name", "unnamed")
+        schema = tool.get("inputSchema", {})
+        props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        reqs = schema.get("required", []) if isinstance(schema, dict) else []
+
+        prop_strs = []
+        if isinstance(props, dict):
+            for p_name, p_schema in props.items():
+                p_type = p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
+                is_req = p_name in reqs if isinstance(reqs, list) else False
+                prop_strs.append(f"{p_name}: {p_type}{'*' if is_req else ''}")
+
+        props_desc = f" ({', '.join(prop_strs)})" if prop_strs else ""
+        click.echo(f"  - {t_name}{props_desc}", err=True)
+
+    if dry_run:
+        await transport_inst.shutdown()
+        click.secho("Dry run complete. No snapshot written.", fg="cyan", err=True)
+        return 0
+
+    # Determine whether to execute tools/call
+    # Flag precedence:
+    # 1. --no-call wins over --yes
+    # 2. --yes overrides isatty() check
+    # 3. If neither flag, check sys.stdin.isatty()
+    should_call = False
+    if no_call:
+        should_call = False
+    elif yes:
+        should_call = True
+    else:
+        # Check TTY
+        is_tty = sys.stdin.isatty()
+        if not is_tty:
+            click.secho(
+                "⚠ Non-interactive mode detected (stdin is not a TTY). Skipping tools/call.\n"
+                "  To call tools in non-interactive mode, pass --yes explicitly.",
+                fg="yellow",
+                err=True
+            )
+            should_call = False
+        else:
+            if discovery.tools:
+                click.echo(err=True)
+                click.secho("⚠ WARNING: The following tools will be called with placeholder arguments against the LIVE server:", fg="yellow", bold=True, err=True)
+                for tool in discovery.tools:
+                    t_name = tool.get("name", "unnamed")
+                    schema = tool.get("inputSchema", {})
+                    props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+                    reqs = schema.get("required", []) if isinstance(schema, dict) else []
+                    prop_strs = []
+                    if isinstance(props, dict):
+                        for p_name, p_schema in props.items():
+                            p_type = p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
+                            is_req = p_name in reqs if isinstance(reqs, list) else False
+                            prop_strs.append(f"{p_name}: {p_type}{'*' if is_req else ''}")
+                    props_desc = f" ({', '.join(prop_strs)})" if prop_strs else ""
+                    click.echo(f"  - {t_name}{props_desc}", err=True)
+                click.echo(err=True)
+                click.secho(
+                    "  Placeholder args are synthetic (e.g. \"example_path\", 0) — tools with side effects\n"
+                    "  may execute real actions. Use --no-call to skip, or --yes to auto-confirm.\n",
+                    fg="yellow",
+                    err=True
+                )
+                try:
+                    should_call = click.confirm("Proceed with tools/call?", default=False, err=True)
+                except (click.Abort, EOFError):
+                    should_call = False
+
+    try:
+        if should_call and discovery.tools:
+            click.secho(f"\n✓ tools/call: calling {len(discovery.tools)} tools with placeholder args...", fg="cyan", err=True)
+
+            def on_tool_result(res: ToolCallResult):
+                if res.status == "success":
+                    click.secho(f"  ✓ {res.tool_name} — success", fg="green", err=True)
+                elif res.status == "error":
+                    click.secho(f"  ⚠ {res.tool_name} — server rejected placeholder args ({res.error_message})", fg="yellow", err=True)
+                else:
+                    click.secho(f"  - {res.tool_name} — skipped ({res.error_message})", fg="yellow", err=True)
+
+            await engine.call_tools(transport_inst, discovery, timeout_ms=timeout, on_tool_result=on_tool_result)
+
+            success_count = sum(1 for r in discovery.tool_call_results if r.status == "success")
+            error_count = sum(1 for r in discovery.tool_call_results if r.status == "error")
+            skipped_count = sum(1 for r in discovery.tool_call_results if r.status == "skipped")
+            total_count = len(discovery.tool_call_results)
+
+            if error_count > 0 or skipped_count > 0:
+                details = []
+                if error_count > 0:
+                    details.append(f"{error_count} returned error responses (recorded as-is in snapshot)")
+                if skipped_count > 0:
+                    details.append(f"{skipped_count} skipped")
+                click.secho(f"⚠ tools/call: {success_count}/{total_count} succeeded, {', '.join(details)}", fg="yellow", err=True)
+            else:
+                click.secho(f"✓ tools/call: {success_count}/{total_count} stubs generated", fg="green", err=True)
+    finally:
+        await transport_inst.shutdown()
+
+    recorded_cmd = args if transport == 'stdio' else ([_sanitize_url(sse_url)] if sse_url else ["remote-server"])
+    transcript_data = engine.build_transcript(discovery, server_command=recorded_cmd)
+
+    default_name = name or server_name or "server"
+    if output:
+        out_path = Path(output)
+        if out_path.suffix in (".yaml", ".yml"):
+            target_file = out_path
+        else:
+            target_file = out_path / f"{default_name}_golden.yaml"
+    else:
+        target_file = Path("snapshots") / f"{default_name}_golden.yaml"
+
+    try:
+        final_path = engine.write_snapshot(transcript_data, target_file)
+        click.secho(f"Golden snapshot written to: {final_path}", fg="green")
+        return 0
+    except Exception as e:
+        click.secho(f"ERROR: Failed to write snapshot: {e}", fg="red", err=True)
+        return 1
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.option('--server', type=str, default=None, help="Server command string to launch (e.g. 'python server.py').")
+@click.option('--output', '-o', type=click.Path(path_type=Path), help="Output directory or golden snapshot file path (default: snapshots/).")
+@click.option('--name', type=str, default=None, help="Custom snapshot name.")
+@click.option('--transport', type=click.Choice(['stdio', 'sse']), default='stdio', help="Transport protocol (default: stdio).")
+@click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
+@click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
+@click.option('--timeout', type=int, default=10000, help="Timeout in milliseconds per request (default: 10000).")
+@click.option('--yes', '-y', is_flag=True, help="Skip confirmation prompt and execute tools/call stubs against the live server.")
+@click.option('--no-call', is_flag=True, help="Generate transcript with initialize + tools/list only (skip tools/call stubs).")
+@click.option('--dry-run', is_flag=True, help="Discover and print tools without writing a snapshot.")
+@click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
+def generate(server, output, name, transport, sse_url, sse_header, timeout, yes, no_call, dry_run, config, server_args):
+    """Auto-discover tools from a server and generate a golden snapshot.
+    
+    Example:
+      mcp-vcr generate --server "python server.py"
+      mcp-vcr generate --server "python server.py" --yes
+      mcp-vcr generate --server "python server.py" --no-call
+      mcp-vcr generate --server "python server.py" --dry-run
+    """
+    import shlex
+    args = []
+    if server:
+        args = shlex.split(server)
+    elif server_args:
+        args = list(server_args)
+        if args and args[0] == '--':
+            args = args[1:]
+
+    if transport == 'stdio' and not args:
+        click.secho("ERROR: No server command specified. What to try: use --server \"command\" or pass arguments after '--'.", fg="red", err=True)
+        sys.exit(1)
+
+    headers = {}
+    if transport == 'sse':
+        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+
+    exit_code = asyncio.run(run_generate(
+        args=args,
+        output=output,
+        name=name,
+        transport=transport,
+        sse_url=sse_url,
+        headers=headers,
+        timeout=timeout,
+        yes=yes,
+        no_call=no_call,
+        dry_run=dry_run,
+        config=config
+    ))
+    sys.exit(exit_code)
+
 if __name__ == "__main__":
     main()
+

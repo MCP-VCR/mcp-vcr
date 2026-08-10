@@ -32,6 +32,7 @@ from .transports.stdio import (
     run_proxy,
 )
 from .replay import ReplayEngine
+from .generator import GeneratorEngine, DiscoveryResult, ToolCallResult
 
 __all__ = [
     "Transcript",
@@ -64,5 +65,8 @@ __all__ = [
     "pump_stderr",
     "run_proxy",
     "ReplayEngine",
+    "GeneratorEngine",
+    "DiscoveryResult",
+    "ToolCallResult",
 ]
 

@@ -64,7 +64,21 @@ pip install mcp-vcr
 
 ## Quickstart Guide
 
-### 1. Record a Live Session
+### 1. Auto-Generate Snapshots (Instant Onboarding)
+Auto-discover all tools from your server and generate a golden snapshot skeleton in seconds:
+
+```bash
+# Auto-discover tools and generate golden snapshot (interactive confirmation)
+mcp-vcr generate --server "python my_server.py"
+
+# Auto-confirm tool execution
+mcp-vcr generate --server "python my_server.py" --yes
+
+# Discovery only (skip tool execution stubs)
+mcp-vcr generate --server "python my_server.py" --no-call
+```
+
+### 2. Record a Live Session
 Run your server through the record proxy. Any standard stdio client interacting with this pipe will be recorded:
 
 ```bash
@@ -72,7 +86,7 @@ mcp-vcr record --name init_tools_list -- python my_server.py
 ```
 This produces an auto-redacted transcript inside the default `sessions/` directory (which you should add to `.gitignore`).
 
-### 2. Create a Golden Snapshot
+### 3. Create a Golden Snapshot
 Turn a raw recorded session into a normalized, stable regression baseline:
 
 ```bash
@@ -80,7 +94,7 @@ mcp-vcr snapshot sessions/session_20260518_init_tools_list.yaml
 ```
 This creates a golden snapshot file under the `snapshots/` directory: `snapshots/init_tools_list_golden.yaml`. **Commit this folder to your Git repository.**
 
-### 3. Verify for Regressions in CI
+### 4. Verify for Regressions in CI
 Run the verification command. It replays client traffic from all golden snapshots against your live server code:
 
 ```bash
@@ -89,7 +103,7 @@ mcp-vcr verify snapshots/ -- python my_server.py
 *   **Exit code `0`**: All responses match their golden snapshots perfectly.
 *   **Exit code `1`**: Regressions or schema mismatches detected. Prints a readable diff to stderr.
 
-### 4. Overwrite Goldens After Intentional Schema Changes
+### 5. Overwrite Goldens After Intentional Schema Changes
 If you intentionally add a new tool or change response formatting, update your golden snapshots using the `--update` flag:
 
 ```bash
