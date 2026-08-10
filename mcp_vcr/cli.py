@@ -1,9 +1,10 @@
 import asyncio
 import click
+import logging
+import re
+import secrets
 import sys
 import yaml
-import secrets
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -673,6 +674,33 @@ def verify(update, timing_faithful, config, snapshots_dir, server_args):
         sys.exit(1)
     sys.exit(exit_code)
 
+def _is_stdin_tty() -> bool:
+    return sys.stdin.isatty()
+
+def _format_tool_line(tool: Dict[str, Any]) -> str:
+    t_name = tool.get("name", "unnamed")
+    schema = tool.get("inputSchema", {})
+    props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    reqs = schema.get("required", []) if isinstance(schema, dict) else []
+
+    prop_strs = []
+    if isinstance(props, dict):
+        for p_name, p_schema in props.items():
+            p_type = p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
+            is_req = p_name in reqs if isinstance(reqs, list) else False
+            prop_strs.append(f"{p_name}: {p_type}{'*' if is_req else ''}")
+
+    props_desc = f" ({', '.join(prop_strs)})" if prop_strs else ""
+    return f"  - {t_name}{props_desc}"
+
+def _echo_tool_list(tools: List[Dict[str, Any]]) -> None:
+    for tool in tools:
+        click.echo(_format_tool_line(tool), err=True)
+
+def _safe_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
+    return slug or "server"
+
 async def run_generate(
     args: list[str],
     output: Optional[Path],
@@ -722,21 +750,7 @@ async def run_generate(
     click.secho(f"✓ initialize: {server_info_str} (protocol: {discovery.protocol_version})", fg="green", err=True)
     click.secho(f"✓ tools/list: {len(discovery.tools)} tools discovered", fg="green", err=True)
 
-    for tool in discovery.tools:
-        t_name = tool.get("name", "unnamed")
-        schema = tool.get("inputSchema", {})
-        props = schema.get("properties", {}) if isinstance(schema, dict) else {}
-        reqs = schema.get("required", []) if isinstance(schema, dict) else []
-
-        prop_strs = []
-        if isinstance(props, dict):
-            for p_name, p_schema in props.items():
-                p_type = p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
-                is_req = p_name in reqs if isinstance(reqs, list) else False
-                prop_strs.append(f"{p_name}: {p_type}{'*' if is_req else ''}")
-
-        props_desc = f" ({', '.join(prop_strs)})" if prop_strs else ""
-        click.echo(f"  - {t_name}{props_desc}", err=True)
+    _echo_tool_list(discovery.tools)
 
     if dry_run:
         await transport_inst.shutdown()
@@ -755,7 +769,7 @@ async def run_generate(
         should_call = True
     else:
         # Check TTY
-        is_tty = sys.stdin.isatty()
+        is_tty = _is_stdin_tty()
         if not is_tty:
             click.secho(
                 "⚠ Non-interactive mode detected (stdin is not a TTY). Skipping tools/call.\n"
@@ -768,19 +782,7 @@ async def run_generate(
             if discovery.tools:
                 click.echo(err=True)
                 click.secho("⚠ WARNING: The following tools will be called with placeholder arguments against the LIVE server:", fg="yellow", bold=True, err=True)
-                for tool in discovery.tools:
-                    t_name = tool.get("name", "unnamed")
-                    schema = tool.get("inputSchema", {})
-                    props = schema.get("properties", {}) if isinstance(schema, dict) else {}
-                    reqs = schema.get("required", []) if isinstance(schema, dict) else []
-                    prop_strs = []
-                    if isinstance(props, dict):
-                        for p_name, p_schema in props.items():
-                            p_type = p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
-                            is_req = p_name in reqs if isinstance(reqs, list) else False
-                            prop_strs.append(f"{p_name}: {p_type}{'*' if is_req else ''}")
-                    props_desc = f" ({', '.join(prop_strs)})" if prop_strs else ""
-                    click.echo(f"  - {t_name}{props_desc}", err=True)
+                _echo_tool_list(discovery.tools)
                 click.echo(err=True)
                 click.secho(
                     "  Placeholder args are synthetic (e.g. \"example_path\", 0) — tools with side effects\n"
@@ -827,7 +829,7 @@ async def run_generate(
     recorded_cmd = args if transport == 'stdio' else ([_sanitize_url(sse_url)] if sse_url else ["remote-server"])
     transcript_data = engine.build_transcript(discovery, server_command=recorded_cmd)
 
-    default_name = name or server_name or "server"
+    default_name = name or _safe_slug(str(server_name))
     if output:
         out_path = Path(output)
         if out_path.suffix in (".yaml", ".yml"):
@@ -842,6 +844,7 @@ async def run_generate(
         click.secho(f"Golden snapshot written to: {final_path}", fg="green")
         return 0
     except Exception as e:
+        logger.debug("Snapshot write failed", exc_info=True)
         click.secho(f"ERROR: Failed to write snapshot: {e}", fg="red", err=True)
         return 1
 

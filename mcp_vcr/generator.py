@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import logging
+import os
 import secrets
 import time
 import yaml
@@ -13,6 +14,9 @@ from typing import Any, Dict, List, Literal, Optional
 from .transports.base import Transport
 
 logger = logging.getLogger("mcp-vcr.generator")
+
+CLIENT_NAME = "mcp-vcr-generate"
+CLIENT_VERSION = "0.2.0"
 
 
 @dataclass
@@ -173,8 +177,8 @@ class GeneratorEngine:
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "mcp-vcr-generate",
-                    "version": "0.2.0"
+                    "name": CLIENT_NAME,
+                    "version": CLIENT_VERSION
                 }
             }
         }
@@ -346,7 +350,7 @@ class GeneratorEngine:
             "session_id": session_id,
             "server_command": sanitized_command,
             "protocol_version": discovery.protocol_version,
-            "client_hint": "mcp-vcr-generate",
+            "client_hint": CLIENT_NAME,
             "schema_version": "1.0"
         }
 
@@ -358,8 +362,8 @@ class GeneratorEngine:
                 "protocolVersion": discovery.protocol_version,
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "mcp-vcr-generate",
-                    "version": "0.2.0"
+                    "name": CLIENT_NAME,
+                    "version": CLIENT_VERSION
                 }
             }
         }
@@ -418,10 +422,12 @@ class GeneratorEngine:
         normalized = normalize_transcript_data(transcript_data)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        temp_path = output_path.parent / f".{output_path.name}.tmp"
+        temp_path = output_path.parent / f".{output_path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
         try:
             with open(temp_path, "w", encoding="utf-8") as f:
                 yaml.safe_dump(normalized, f, sort_keys=True, default_flow_style=False)
+                f.flush()
+                os.fsync(f.fileno())
             validate_file(temp_path, allow_v0=False)
             temp_path.replace(output_path)
         except Exception:

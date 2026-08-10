@@ -76,7 +76,13 @@ mcp-vcr generate --server "python my_server.py" --yes
 
 # Discovery only (skip tool execution stubs)
 mcp-vcr generate --server "python my_server.py" --no-call
+
+# Print discovered tools without writing a snapshot
+mcp-vcr generate --server "python my_server.py" --dry-run
 ```
+
+> [!NOTE]
+> If stdin is not a TTY (for example in CI), `generate` skips `tools/call` and records `initialize` plus `tools/list` only. Pass `--yes` to call tools in that environment.
 
 ### 2. Record a Live Session
 Run your server through the record proxy. Any standard stdio client interacting with this pipe will be recorded:

@@ -340,6 +340,17 @@ def test_build_transcript_structure_and_validation(tmp_path):
     assert len(validated.messages) == 7
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def workspace_server() -> Path:
+    server = REPO_ROOT / "server.py"
+    if not server.exists():
+        pytest.skip("server.py fixture not present in repository root")
+    return server
+
+
 def test_write_snapshot_atomic(tmp_path, monkeypatch):
     engine = GeneratorEngine()
     transcript_data = {
@@ -366,10 +377,21 @@ def test_write_snapshot_atomic(tmp_path, monkeypatch):
     assert out_file.exists()
 
 
-def test_cli_dry_run_no_file(tmp_path, monkeypatch):
+def test_write_snapshot_rollback_on_invalid(tmp_path):
+    engine = GeneratorEngine()
+    out_file = tmp_path / "rollback_golden.yaml"
+    out_file.write_text("pre-existing")
+
+    with pytest.raises(Exception):
+        engine.write_snapshot({"meta": {"version": 1}, "messages": "not-a-list"}, out_file)
+
+    assert out_file.read_text() == "pre-existing"
+    assert list(tmp_path.glob(".*tmp")) == []
+
+
+def test_cli_dry_run_no_file(tmp_path, monkeypatch, workspace_server):
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-    workspace_server = Path("/home/rosai/Downloads/mcp-vcr/server.py")
 
     result = runner.invoke(main, ["generate", "--server", f"{sys.executable} {workspace_server}", "--dry-run"])
     assert result.exit_code == 0
@@ -377,11 +399,10 @@ def test_cli_dry_run_no_file(tmp_path, monkeypatch):
     assert not (tmp_path / "snapshots").exists()
 
 
-def test_cli_flags_precedence(tmp_path, monkeypatch):
+def test_cli_flags_precedence(tmp_path, monkeypatch, workspace_server):
     """Verify --no-call takes precedence over --yes (no tools/call executed)."""
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-    workspace_server = Path("/home/rosai/Downloads/mcp-vcr/server.py")
 
     result = runner.invoke(main, [
         "generate",
@@ -400,11 +421,10 @@ def test_cli_flags_precedence(tmp_path, monkeypatch):
     assert "tools/call" not in methods
 
 
-def test_cli_non_interactive_skip(tmp_path, monkeypatch):
+def test_cli_non_interactive_skip(tmp_path, monkeypatch, workspace_server):
     """Verify non-interactive mode without --yes auto-skips tools/call with warning."""
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-    workspace_server = Path("/home/rosai/Downloads/mcp-vcr/server.py")
 
     # In CliRunner, stdin is not a tty by default
     result = runner.invoke(main, [
@@ -421,14 +441,10 @@ def test_cli_non_interactive_skip(tmp_path, monkeypatch):
     assert "tools/call" not in methods
 
 
-def test_generate_end_to_end(tmp_path, monkeypatch):
+def test_generate_end_to_end(tmp_path, monkeypatch, workspace_server):
     """Run mcp-vcr generate --server 'python server.py' --yes against real test server."""
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-
-    # Note server.py is in the workspace root
-    workspace_server = Path("/home/rosai/Downloads/mcp-vcr/server.py")
-    assert workspace_server.exists()
 
     result = runner.invoke(main, [
         "generate",
@@ -452,12 +468,11 @@ def test_generate_end_to_end(tmp_path, monkeypatch):
     assert tool_call_msgs[0].payload["params"]["name"] == "toolA"
 
 
-def test_cli_interactive_prompt_yes(tmp_path, monkeypatch):
+def test_cli_interactive_prompt_yes(tmp_path, monkeypatch, workspace_server):
     """When TTY is present and user responds 'y', tools/call is executed."""
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("click.testing._NamedTextIOWrapper.isatty", lambda self: True)
-    workspace_server = Path("/home/rosai/Downloads/mcp-vcr/server.py")
+    monkeypatch.setattr("mcp_vcr.cli._is_stdin_tty", lambda: True)
 
     result = runner.invoke(main, [
         "generate",
@@ -475,12 +490,11 @@ def test_cli_interactive_prompt_yes(tmp_path, monkeypatch):
     assert "tools/call" in methods
 
 
-def test_cli_interactive_prompt_no(tmp_path, monkeypatch):
+def test_cli_interactive_prompt_no(tmp_path, monkeypatch, workspace_server):
     """When TTY is present and user responds 'n', tools/call is skipped."""
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("click.testing._NamedTextIOWrapper.isatty", lambda self: True)
-    workspace_server = Path("/home/rosai/Downloads/mcp-vcr/server.py")
+    monkeypatch.setattr("mcp_vcr.cli._is_stdin_tty", lambda: True)
 
     result = runner.invoke(main, [
         "generate",
@@ -542,4 +556,43 @@ for line in sys.stdin:
     assert out_file.exists()
     validated = validate_file(out_file, allow_v0=False)
     assert len(validated.messages) >= 7
+
+
+def test_cli_server_name_sanitized(tmp_path, monkeypatch):
+    """Verify serverInfo.name with path traversal characters is safely slugified."""
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+
+    malicious_server = tmp_path / "malicious_server.py"
+    malicious_server.write_text("""
+import sys, json
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    data = json.loads(line)
+    mid = data.get("id")
+    method = data.get("method")
+    if mid is not None:
+        if method == "initialize":
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {"name": "../../malicious/name", "version": "1.0"}}}
+        elif method == "tools/list":
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {"tools": []}}
+        else:
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {}}
+        sys.stdout.write(json.dumps(resp) + "\\n")
+        sys.stdout.flush()
+""")
+
+    result = runner.invoke(main, [
+        "generate",
+        "--server", f"{sys.executable} {malicious_server}",
+        "--no-call"
+    ])
+
+    assert result.exit_code == 0
+    # Output must stay inside snapshots directory without path traversal
+    expected_file = tmp_path / "snapshots" / "malicious_name_golden.yaml"
+    assert expected_file.exists()
 
