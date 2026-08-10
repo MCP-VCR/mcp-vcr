@@ -9,7 +9,7 @@ import time
 import yaml
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from .transports.base import Transport
@@ -82,9 +82,10 @@ def sanitize_server_command(server_command: List[str]) -> List[str]:
 
         # Sanitize file paths to basename
         try:
-            p = Path(arg)
-            if p.is_absolute() or "\\" in str(arg) or "/" in str(arg):
-                sanitized.append(p.name or arg)
+            if "\\" in str(arg):
+                sanitized.append(PureWindowsPath(arg).name or arg)
+            elif "/" in str(arg) or Path(arg).is_absolute():
+                sanitized.append(Path(arg).name or arg)
             else:
                 sanitized.append(arg)
         except (TypeError, ValueError):

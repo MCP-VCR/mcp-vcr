@@ -710,6 +710,7 @@ def test_server_command_credential_redaction():
     cmd = [
         "python",
         "/absolute/path/to/my_server.py",
+        r"C:\Users\username\project\win_server.py",
         "--token", "super_secret_token_123",
         "--api-key=sk-123456789012345678901234",
         "AUTH_TOKEN=my_password",
@@ -719,6 +720,7 @@ def test_server_command_credential_redaction():
         "--keystore-dir", "/etc/ssl",
         "/",
         "dir/",
+        "C:\\",
         "--normal-flag", "normal-value"
     ]
 
@@ -729,20 +731,22 @@ def test_server_command_credential_redaction():
     assert len(sanitized) == len(cmd)
     assert sanitized[0] == "python"
     assert sanitized[1] == "my_server.py"
-    assert sanitized[2] == "--token"
-    assert sanitized[3] == "<REDACTED>"
-    assert sanitized[4] == "--api-key=<REDACTED>"
-    assert sanitized[5] == "AUTH_TOKEN=<REDACTED>"
-    assert sanitized[6] == "<REDACTED>"
-    assert sanitized[7] == "CONFIG=<REDACTED>"
-    assert sanitized[8] == "--keyword"
-    assert sanitized[9] == "search_term"
-    assert sanitized[10] == "--keystore-dir"
-    assert sanitized[11] == "ssl"
-    assert sanitized[12] == "/"
-    assert sanitized[13] == "dir"
-    assert sanitized[14] == "--normal-flag"
-    assert sanitized[15] == "normal-value"
+    assert sanitized[2] == "win_server.py"
+    assert sanitized[3] == "--token"
+    assert sanitized[4] == "<REDACTED>"
+    assert sanitized[5] == "--api-key=<REDACTED>"
+    assert sanitized[6] == "AUTH_TOKEN=<REDACTED>"
+    assert sanitized[7] == "<REDACTED>"
+    assert sanitized[8] == "CONFIG=<REDACTED>"
+    assert sanitized[9] == "--keyword"
+    assert sanitized[10] == "search_term"
+    assert sanitized[11] == "--keystore-dir"
+    assert sanitized[12] == "ssl"
+    assert sanitized[13] == "/"
+    assert sanitized[14] == "dir"
+    assert sanitized[15] == "C:\\"
+    assert sanitized[16] == "--normal-flag"
+    assert sanitized[17] == "normal-value"
 
 
 @pytest.mark.asyncio
