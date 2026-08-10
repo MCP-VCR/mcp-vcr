@@ -10,7 +10,7 @@ import yaml
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from .transports.base import Transport
 
@@ -19,11 +19,13 @@ logger = logging.getLogger("mcp-vcr.generator")
 CLIENT_NAME = "mcp-vcr-generate"
 CLIENT_VERSION = "0.2.0"
 CLIENT_PROTOCOL_VERSION = "2024-11-05"
+MAX_TOOLS_LIST_PAGES = 100
 
 SENSITIVE_FLAG_NAMES = {
     "token", "api-key", "apikey", "api_key", "secret", "password",
     "auth", "auth-token", "auth_token", "credential", "bearer", "key"
 }
+SENSITIVE_TOKEN_PARTS = ("token", "secret", "password", "api-key", "apikey", "auth")
 SENSITIVE_PATTERNS = [
     re.compile(pat) for pat in [
         r"sk-[a-zA-Z0-9]{20,}",
@@ -31,6 +33,15 @@ SENSITIVE_PATTERNS = [
         r"[A-Z0-9]{20}:[a-zA-Z0-9+/]{40}",
     ]
 ]
+
+
+def _is_sensitive_key(norm_key: str) -> bool:
+    if norm_key in SENSITIVE_FLAG_NAMES:
+        return True
+    parts = norm_key.split("-")
+    return any(part in SENSITIVE_FLAG_NAMES for part in parts) or any(
+        s in norm_key for s in SENSITIVE_TOKEN_PARTS
+    )
 
 
 def sanitize_server_command(server_command: List[str]) -> List[str]:
@@ -49,7 +60,7 @@ def sanitize_server_command(server_command: List[str]) -> List[str]:
         if "=" in arg:
             key, val = arg.split("=", 1)
             norm_key = key.lstrip("-").lower().replace("_", "-")
-            if norm_key in SENSITIVE_FLAG_NAMES or any(s in norm_key for s in ("token", "secret", "password", "key", "auth")):
+            if _is_sensitive_key(norm_key):
                 sanitized.append(f"{key}=<REDACTED>")
                 continue
             if any(p.search(val) for p in SENSITIVE_PATTERNS):
@@ -58,7 +69,7 @@ def sanitize_server_command(server_command: List[str]) -> List[str]:
 
         # Check for separate flags like --token <secret> or --api-key <secret>
         norm_arg = arg.lstrip("-").lower().replace("_", "-")
-        if arg.startswith("-") and (norm_arg in SENSITIVE_FLAG_NAMES or any(s in norm_arg for s in ("token", "secret", "password", "key", "auth"))):
+        if arg.startswith("-") and _is_sensitive_key(norm_arg):
             sanitized.append(arg)
             if idx + 1 < len(server_command):
                 skip_next = True
@@ -73,7 +84,7 @@ def sanitize_server_command(server_command: List[str]) -> List[str]:
         try:
             p = Path(arg)
             if p.is_absolute() or "\\" in str(arg) or "/" in str(arg):
-                sanitized.append(p.name)
+                sanitized.append(p.name or arg)
             else:
                 sanitized.append(arg)
         except (TypeError, ValueError):
@@ -99,7 +110,7 @@ class DiscoveryResult:
     tools: List[Dict[str, Any]]
     initialize_response: Dict[str, Any]
     tools_list_response: Dict[str, Any]
-    tools_list_pages: List[tuple] = field(default_factory=list)
+    tools_list_pages: List[Tuple[Dict[str, Any], Dict[str, Any]]] = field(default_factory=list)
     tool_call_results: List[ToolCallResult] = field(default_factory=list)
     client_protocol_version: str = CLIENT_PROTOCOL_VERSION
 
@@ -266,9 +277,10 @@ class GeneratorEngine:
 
         # 3. Send tools/list request (id=2) with cursor pagination
         tools: List[Dict[str, Any]] = []
-        tools_list_pages: List[tuple] = []
+        tools_list_pages: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
         req_id = 2
         next_cursor = None
+        seen_cursors: set = set()
 
         while True:
             params = {}
@@ -295,7 +307,17 @@ class GeneratorEngine:
 
             raw_cursor = tools_result.get("nextCursor") if isinstance(tools_result, dict) else None
             if raw_cursor and isinstance(raw_cursor, str) and raw_cursor.strip():
-                next_cursor = raw_cursor.strip()
+                cursor = raw_cursor.strip()
+                if cursor in seen_cursors:
+                    logger.warning("Server repeated tools/list cursor; stopping pagination.")
+                    break
+                if len(tools_list_pages) >= MAX_TOOLS_LIST_PAGES:
+                    logger.warning(
+                        f"Reached tools/list page limit ({MAX_TOOLS_LIST_PAGES}); stopping pagination."
+                    )
+                    break
+                seen_cursors.add(cursor)
+                next_cursor = cursor
                 req_id += 1
             else:
                 break

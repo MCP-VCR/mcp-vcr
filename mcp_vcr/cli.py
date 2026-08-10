@@ -677,8 +677,13 @@ def verify(update, timing_faithful, config, snapshots_dir, server_args):
 def _is_stdin_tty() -> bool:
     return sys.stdin.isatty()
 
+_UNSAFE_DISPLAY_CHARS = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"
+)
+
+
 def _terminal_safe(value: Any) -> str:
-    return re.sub(r"[\x00-\x1f\x7f-\x9f]", "", str(value))
+    return _UNSAFE_DISPLAY_CHARS.sub("", str(value))
 
 def _format_tool_line(tool: Dict[str, Any]) -> str:
     t_name = _terminal_safe(tool.get("name", "unnamed"))

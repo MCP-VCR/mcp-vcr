@@ -697,7 +697,7 @@ def test_build_transcript_client_protocol_version():
 
 
 def test_server_command_credential_redaction():
-    """Verify sensitive tokens and keys in server_command are redacted."""
+    """Verify sensitive tokens and keys in server_command are redacted without mangling benign flags."""
     discovery = DiscoveryResult(
         protocol_version="2024-11-05",
         server_info={"name": "sample"},
@@ -713,6 +713,12 @@ def test_server_command_credential_redaction():
         "--token", "super_secret_token_123",
         "--api-key=sk-123456789012345678901234",
         "AUTH_TOKEN=my_password",
+        "sk-abcdefghijklmnopqrstuvwx",
+        "CONFIG=Bearer abc123def456",
+        "--keyword", "search_term",
+        "--keystore-dir", "/etc/ssl",
+        "/",
+        "dir/",
         "--normal-flag", "normal-value"
     ]
 
@@ -720,18 +726,66 @@ def test_server_command_credential_redaction():
     transcript = engine.build_transcript(discovery, cmd)
     sanitized = transcript["meta"]["server_command"]
 
+    assert len(sanitized) == len(cmd)
     assert sanitized[0] == "python"
     assert sanitized[1] == "my_server.py"
     assert sanitized[2] == "--token"
     assert sanitized[3] == "<REDACTED>"
     assert sanitized[4] == "--api-key=<REDACTED>"
     assert sanitized[5] == "AUTH_TOKEN=<REDACTED>"
-    assert sanitized[6] == "--normal-flag"
-    assert sanitized[7] == "normal-value"
+    assert sanitized[6] == "<REDACTED>"
+    assert sanitized[7] == "CONFIG=<REDACTED>"
+    assert sanitized[8] == "--keyword"
+    assert sanitized[9] == "search_term"
+    assert sanitized[10] == "--keystore-dir"
+    assert sanitized[11] == "ssl"
+    assert sanitized[12] == "/"
+    assert sanitized[13] == "dir"
+    assert sanitized[14] == "--normal-flag"
+    assert sanitized[15] == "normal-value"
+
+
+@pytest.mark.asyncio
+async def test_discover_pagination_stops_on_repeated_cursor():
+    """Verify discovery loop halts when a server returns a repeated cursor."""
+    init_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "serverInfo": {"name": "loop-server", "version": "1.0"}
+        }
+    }
+    # Page 1 returns tool1 with cursor "loop_cursor"
+    page1_resp = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "tools": [{"name": "tool_1", "inputSchema": {}}],
+            "nextCursor": "loop_cursor"
+        }
+    }
+    # Page 2 returns tool2 with the SAME cursor "loop_cursor"
+    page2_resp = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+            "tools": [{"name": "tool_2", "inputSchema": {}}],
+            "nextCursor": "loop_cursor"
+        }
+    }
+
+    mock_transport = MockTransport(responses=[init_resp, page1_resp, page2_resp])
+    engine = GeneratorEngine()
+    discovery = await engine.discover(mock_transport)
+
+    assert len(discovery.tools) == 2
+    assert len(discovery.tools_list_pages) == 2
 
 
 def test_cli_terminal_control_characters_stripped(tmp_path, monkeypatch):
-    """Verify ANSI/control escape sequences in tool metadata are stripped from terminal output."""
+    """Verify ANSI, control, zero-width, and bidi override characters are stripped from terminal output."""
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
 
@@ -750,7 +804,7 @@ for line in sys.stdin:
         if method == "initialize":
             resp = {"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {"name": "ansi-server", "version": "1.0"}}}
         elif method == "tools/list":
-            resp = {"jsonrpc": "2.0", "id": mid, "result": {"tools": [{"name": "\\x1b[31mInjectedTool\\x1b[0m\\x07", "inputSchema": {"type": "object", "properties": {"\\x1b[32marg\\x1b[0m": {"type": "string\\x1b[0m"}}, "required": ["\\x1b[32marg\\x1b[0m"]}}]}}
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {"tools": [{"name": "\\x1b[31m\\u202eInjectedTool\\u202c\\x1b[0m\\x07\\u200b", "inputSchema": {"type": "object", "properties": {"\\x1b[32marg\\x1b[0m\\ufeff": {"type": "string\\x1b[0m"}}, "required": ["\\x1b[32marg\\x1b[0m\\ufeff"]}}]}}
         else:
             resp = {"jsonrpc": "2.0", "id": mid, "result": {}}
         sys.stdout.write(json.dumps(resp) + "\\n")
@@ -764,9 +818,9 @@ for line in sys.stdin:
     ])
 
     assert result.exit_code == 0
-    # ANSI escape characters must not appear in output
-    assert "\x1b" not in result.output
-    assert "\x07" not in result.output
+    # ANSI escape characters, zero-width, and bidi overrides must not appear in output
+    for c in ["\x1b", "\x07", "\u202e", "\u202c", "\u200b", "\ufeff"]:
+        assert c not in result.output
     assert "InjectedTool" in result.output
 
 
