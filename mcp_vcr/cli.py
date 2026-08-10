@@ -677,8 +677,11 @@ def verify(update, timing_faithful, config, snapshots_dir, server_args):
 def _is_stdin_tty() -> bool:
     return sys.stdin.isatty()
 
+def _terminal_safe(value: Any) -> str:
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", "", str(value))
+
 def _format_tool_line(tool: Dict[str, Any]) -> str:
-    t_name = tool.get("name", "unnamed")
+    t_name = _terminal_safe(tool.get("name", "unnamed"))
     schema = tool.get("inputSchema", {})
     props = schema.get("properties", {}) if isinstance(schema, dict) else {}
     reqs = schema.get("required", []) if isinstance(schema, dict) else []
@@ -686,9 +689,11 @@ def _format_tool_line(tool: Dict[str, Any]) -> str:
     prop_strs = []
     if isinstance(props, dict):
         for p_name, p_schema in props.items():
-            p_type = p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
+            p_type = _terminal_safe(
+                p_schema.get("type", "any") if isinstance(p_schema, dict) else "any"
+            )
             is_req = p_name in reqs if isinstance(reqs, list) else False
-            prop_strs.append(f"{p_name}: {p_type}{'*' if is_req else ''}")
+            prop_strs.append(f"{_terminal_safe(p_name)}: {p_type}{'*' if is_req else ''}")
 
     props_desc = f" ({', '.join(prop_strs)})" if prop_strs else ""
     return f"  - {t_name}{props_desc}"

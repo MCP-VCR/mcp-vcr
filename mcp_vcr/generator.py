@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 import os
+import re
 import secrets
 import time
 import yaml
@@ -17,6 +18,68 @@ logger = logging.getLogger("mcp-vcr.generator")
 
 CLIENT_NAME = "mcp-vcr-generate"
 CLIENT_VERSION = "0.2.0"
+CLIENT_PROTOCOL_VERSION = "2024-11-05"
+
+SENSITIVE_FLAG_NAMES = {
+    "token", "api-key", "apikey", "api_key", "secret", "password",
+    "auth", "auth-token", "auth_token", "credential", "bearer", "key"
+}
+SENSITIVE_PATTERNS = [
+    re.compile(pat) for pat in [
+        r"sk-[a-zA-Z0-9]{20,}",
+        r"Bearer [a-zA-Z0-9\-._~+/]+=*",
+        r"[A-Z0-9]{20}:[a-zA-Z0-9+/]{40}",
+    ]
+]
+
+
+def sanitize_server_command(server_command: List[str]) -> List[str]:
+    """
+    Sanitize server command arguments by stripping paths and redacting sensitive credentials.
+    """
+    sanitized = []
+    skip_next = False
+    for idx, arg in enumerate(server_command):
+        if skip_next:
+            sanitized.append("<REDACTED>")
+            skip_next = False
+            continue
+
+        # Check for --flag=value or KEY=value
+        if "=" in arg:
+            key, val = arg.split("=", 1)
+            norm_key = key.lstrip("-").lower().replace("_", "-")
+            if norm_key in SENSITIVE_FLAG_NAMES or any(s in norm_key for s in ("token", "secret", "password", "key", "auth")):
+                sanitized.append(f"{key}=<REDACTED>")
+                continue
+            if any(p.search(val) for p in SENSITIVE_PATTERNS):
+                sanitized.append(f"{key}=<REDACTED>")
+                continue
+
+        # Check for separate flags like --token <secret> or --api-key <secret>
+        norm_arg = arg.lstrip("-").lower().replace("_", "-")
+        if arg.startswith("-") and (norm_arg in SENSITIVE_FLAG_NAMES or any(s in norm_arg for s in ("token", "secret", "password", "key", "auth"))):
+            sanitized.append(arg)
+            if idx + 1 < len(server_command):
+                skip_next = True
+            continue
+
+        # Check raw argument patterns
+        if any(p.search(arg) for p in SENSITIVE_PATTERNS):
+            sanitized.append("<REDACTED>")
+            continue
+
+        # Sanitize file paths to basename
+        try:
+            p = Path(arg)
+            if p.is_absolute() or "\\" in str(arg) or "/" in str(arg):
+                sanitized.append(p.name)
+            else:
+                sanitized.append(arg)
+        except (TypeError, ValueError):
+            sanitized.append(arg)
+
+    return sanitized
 
 
 @dataclass
@@ -36,7 +99,9 @@ class DiscoveryResult:
     tools: List[Dict[str, Any]]
     initialize_response: Dict[str, Any]
     tools_list_response: Dict[str, Any]
+    tools_list_pages: List[tuple] = field(default_factory=list)
     tool_call_results: List[ToolCallResult] = field(default_factory=list)
+    client_protocol_version: str = CLIENT_PROTOCOL_VERSION
 
 
 class GeneratorEngine:
@@ -162,7 +227,7 @@ class GeneratorEngine:
         timeout_ms: int = 10000
     ) -> DiscoveryResult:
         """
-        Connect to the server and perform initialize + tools/list discovery.
+        Connect to the server and perform initialize + tools/list discovery with cursor pagination.
         Does NOT shut down the transport to allow subsequent tool calls.
         """
         if not transport.server_running:
@@ -174,7 +239,7 @@ class GeneratorEngine:
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": CLIENT_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {
                     "name": CLIENT_NAME,
@@ -188,7 +253,7 @@ class GeneratorEngine:
             raise RuntimeError(f"Server rejected initialize: {err}")
 
         result_obj = init_resp.get("result", {})
-        protocol_version = result_obj.get("protocolVersion", "2024-11-05")
+        protocol_version = result_obj.get("protocolVersion", CLIENT_PROTOCOL_VERSION)
         server_info = result_obj.get("serverInfo", {})
         capabilities = result_obj.get("capabilities", {})
 
@@ -199,20 +264,43 @@ class GeneratorEngine:
         }
         await self._send_notification(transport, init_notif)
 
-        # 3. Send tools/list request (id=2)
-        tools_list_req = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        }
-        tools_list_resp = await self._send_and_receive(transport, tools_list_req, expected_id=2, timeout_ms=timeout_ms)
-        if "error" in tools_list_resp:
-            err = tools_list_resp["error"]
-            raise RuntimeError(f"Server rejected tools/list: {err}")
+        # 3. Send tools/list request (id=2) with cursor pagination
+        tools: List[Dict[str, Any]] = []
+        tools_list_pages: List[tuple] = []
+        req_id = 2
+        next_cursor = None
 
-        tools_result = tools_list_resp.get("result", {})
-        tools = tools_result.get("tools", []) if isinstance(tools_result, dict) else []
+        while True:
+            params = {}
+            if next_cursor:
+                params["cursor"] = next_cursor
+
+            tools_list_req = {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "tools/list",
+                "params": params
+            }
+            tools_list_resp = await self._send_and_receive(
+                transport, tools_list_req, expected_id=req_id, timeout_ms=timeout_ms
+            )
+            if "error" in tools_list_resp:
+                err = tools_list_resp["error"]
+                raise RuntimeError(f"Server rejected tools/list (id={req_id}): {err}")
+
+            tools_result = tools_list_resp.get("result", {})
+            page_tools = tools_result.get("tools", []) if isinstance(tools_result, dict) else []
+            tools.extend(page_tools)
+            tools_list_pages.append((tools_list_req, tools_list_resp))
+
+            raw_cursor = tools_result.get("nextCursor") if isinstance(tools_result, dict) else None
+            if raw_cursor and isinstance(raw_cursor, str) and raw_cursor.strip():
+                next_cursor = raw_cursor.strip()
+                req_id += 1
+            else:
+                break
+
+        first_tools_resp = tools_list_pages[0][1] if tools_list_pages else {"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}
 
         return DiscoveryResult(
             protocol_version=protocol_version,
@@ -220,8 +308,10 @@ class GeneratorEngine:
             capabilities=capabilities,
             tools=tools,
             initialize_response=init_resp,
-            tools_list_response=tools_list_resp,
-            tool_call_results=[]
+            tools_list_response=first_tools_resp,
+            tools_list_pages=tools_list_pages,
+            tool_call_results=[],
+            client_protocol_version=CLIENT_PROTOCOL_VERSION
         )
 
     async def call_tools(
@@ -239,7 +329,8 @@ class GeneratorEngine:
         results: List[ToolCallResult] = []
         transport_broken = False
 
-        for idx, tool in enumerate(discovery.tools, start=3):
+        start_idx = 2 + max(1, len(discovery.tools_list_pages))
+        for idx, tool in enumerate(discovery.tools, start=start_idx):
             tool_name = tool.get("name", f"tool_{idx}")
             schema = tool.get("inputSchema", {})
             args = self.generate_placeholder_args(schema)
@@ -330,16 +421,7 @@ class GeneratorEngine:
         """
         Build a deterministic v1 transcript dictionary from discovery and tool call results.
         """
-        sanitized_command = []
-        for arg in server_command:
-            try:
-                p = Path(arg)
-                if p.is_absolute() or "\\" in str(arg):
-                    sanitized_command.append(p.name)
-                else:
-                    sanitized_command.append(arg)
-            except (TypeError, ValueError):
-                sanitized_command.append(arg)
+        sanitized_command = sanitize_server_command(server_command)
 
         session_id = secrets.token_hex(4)
         recorded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -359,7 +441,7 @@ class GeneratorEngine:
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": discovery.protocol_version,
+                "protocolVersion": discovery.client_protocol_version,
                 "capabilities": {},
                 "clientInfo": {
                     "name": CLIENT_NAME,
@@ -373,25 +455,34 @@ class GeneratorEngine:
             "method": "notifications/initialized"
         }
 
-        tools_list_c2s = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        }
-
         messages = [
             {"t": 0, "dir": "c2s", "payload": init_c2s},
             {"t": 25, "dir": "s2c", "payload": discovery.initialize_response},
             {"t": 30, "dir": "c2s", "payload": initialized_c2s},
-            {"t": 40, "dir": "c2s", "payload": tools_list_c2s},
-            {"t": 65, "dir": "s2c", "payload": discovery.tools_list_response},
         ]
 
+        pages = discovery.tools_list_pages
+        if not pages:
+            tools_list_fallback = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {}
+            }
+            pages = [(tools_list_fallback, discovery.tools_list_response)]
+
+        t_curr = 40
+        for page_req, page_resp in pages:
+            messages.append({"t": t_curr, "dir": "c2s", "payload": page_req})
+            t_curr += 25
+            messages.append({"t": t_curr, "dir": "s2c", "payload": page_resp})
+            t_curr += 15
+
+        t_call_start = max(100, t_curr + 20)
         for i, tool_res in enumerate(discovery.tool_call_results):
             if tool_res.response_payload is not None:
-                c2s_t = 100 + i * 50
-                s2c_t = 125 + i * 50
+                c2s_t = t_call_start + i * 50
+                s2c_t = t_call_start + 25 + i * 50
                 messages.append({
                     "t": c2s_t,
                     "dir": "c2s",

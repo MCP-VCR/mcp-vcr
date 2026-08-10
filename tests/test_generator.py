@@ -596,3 +596,177 @@ for line in sys.stdin:
     expected_file = tmp_path / "snapshots" / "malicious_name_golden.yaml"
     assert expected_file.exists()
 
+
+@pytest.mark.asyncio
+async def test_discover_and_transcript_tools_list_pagination():
+    """Verify tools/list cursor pagination collects all tools across pages and preserves request/response pairs."""
+    init_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "serverInfo": {"name": "paged-server", "version": "1.0"}
+        }
+    }
+    # Page 1 returns tool1 and nextCursor
+    page1_resp = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "tools": [{"name": "tool_page1", "inputSchema": {}}],
+            "nextCursor": "cursor_page_2"
+        }
+    }
+    # Page 2 returns tool2 and no nextCursor
+    page2_resp = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+            "tools": [{"name": "tool_page2", "inputSchema": {}}],
+            "nextCursor": None
+        }
+    }
+
+    mock_transport = MockTransport(responses=[init_resp, page1_resp, page2_resp])
+    engine = GeneratorEngine()
+    discovery = await engine.discover(mock_transport)
+
+    assert len(discovery.tools) == 2
+    assert discovery.tools[0]["name"] == "tool_page1"
+    assert discovery.tools[1]["name"] == "tool_page2"
+    assert len(discovery.tools_list_pages) == 2
+
+    # Check written messages during discovery: init, notif, page1 (id=2), page2 (id=3 with cursor)
+    assert len(mock_transport.written_messages) == 4
+    assert mock_transport.written_messages[2]["id"] == 2
+    assert mock_transport.written_messages[2]["params"] == {}
+    assert mock_transport.written_messages[3]["id"] == 3
+    assert mock_transport.written_messages[3]["params"] == {"cursor": "cursor_page_2"}
+
+    # Call tools
+    call1_resp = {"jsonrpc": "2.0", "id": 4, "result": {"ok": True}}
+    call2_resp = {"jsonrpc": "2.0", "id": 5, "result": {"ok": True}}
+    mock_transport.responses = [call1_resp, call2_resp]
+
+    call_results = await engine.call_tools(mock_transport, discovery)
+    assert len(call_results) == 2
+    assert call_results[0].request_payload["id"] == 4
+    assert call_results[1].request_payload["id"] == 5
+
+    # Build transcript
+    transcript = engine.build_transcript(discovery, server_command=["python", "server.py"])
+    messages = transcript["messages"]
+    # messages: init c2s (0), init s2c (1), notif c2s (2), p1 c2s (3), p1 s2c (4), p2 c2s (5), p2 s2c (6), call1 c2s (7), call1 s2c (8), call2 c2s (9), call2 s2c (10)
+    assert len(messages) == 11
+    assert messages[3]["payload"]["id"] == 2
+    assert messages[5]["payload"]["id"] == 3
+    assert messages[7]["payload"]["id"] == 4
+    assert messages[9]["payload"]["id"] == 5
+
+
+def test_build_transcript_client_protocol_version():
+    """Verify that initialize c2s records the client-sent protocol version even if server negotiates differently."""
+    init_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2025-01-01",  # Server negotiated version
+            "capabilities": {},
+            "serverInfo": {"name": "sample", "version": "1.0"}
+        }
+    }
+    discovery = DiscoveryResult(
+        protocol_version="2025-01-01",
+        server_info={"name": "sample"},
+        capabilities={},
+        tools=[],
+        initialize_response=init_resp,
+        tools_list_response={"jsonrpc": "2.0", "id": 2, "result": {"tools": []}},
+        client_protocol_version="2024-11-05"
+    )
+
+    engine = GeneratorEngine()
+    transcript = engine.build_transcript(discovery, ["python", "server.py"])
+
+    # Metadata should have server-negotiated version
+    assert transcript["meta"]["protocol_version"] == "2025-01-01"
+    # Initial c2s request should record the client-sent version
+    init_c2s = transcript["messages"][0]["payload"]
+    assert init_c2s["params"]["protocolVersion"] == "2024-11-05"
+
+
+def test_server_command_credential_redaction():
+    """Verify sensitive tokens and keys in server_command are redacted."""
+    discovery = DiscoveryResult(
+        protocol_version="2024-11-05",
+        server_info={"name": "sample"},
+        capabilities={},
+        tools=[],
+        initialize_response={"jsonrpc": "2.0", "id": 1, "result": {}},
+        tools_list_response={"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}
+    )
+
+    cmd = [
+        "python",
+        "/absolute/path/to/my_server.py",
+        "--token", "super_secret_token_123",
+        "--api-key=sk-123456789012345678901234",
+        "AUTH_TOKEN=my_password",
+        "--normal-flag", "normal-value"
+    ]
+
+    engine = GeneratorEngine()
+    transcript = engine.build_transcript(discovery, cmd)
+    sanitized = transcript["meta"]["server_command"]
+
+    assert sanitized[0] == "python"
+    assert sanitized[1] == "my_server.py"
+    assert sanitized[2] == "--token"
+    assert sanitized[3] == "<REDACTED>"
+    assert sanitized[4] == "--api-key=<REDACTED>"
+    assert sanitized[5] == "AUTH_TOKEN=<REDACTED>"
+    assert sanitized[6] == "--normal-flag"
+    assert sanitized[7] == "normal-value"
+
+
+def test_cli_terminal_control_characters_stripped(tmp_path, monkeypatch):
+    """Verify ANSI/control escape sequences in tool metadata are stripped from terminal output."""
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+
+    ansi_server = tmp_path / "ansi_server.py"
+    ansi_server.write_text("""
+import sys, json
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    data = json.loads(line)
+    mid = data.get("id")
+    method = data.get("method")
+    if mid is not None:
+        if method == "initialize":
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {"name": "ansi-server", "version": "1.0"}}}
+        elif method == "tools/list":
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {"tools": [{"name": "\\x1b[31mInjectedTool\\x1b[0m\\x07", "inputSchema": {"type": "object", "properties": {"\\x1b[32marg\\x1b[0m": {"type": "string\\x1b[0m"}}, "required": ["\\x1b[32marg\\x1b[0m"]}}]}}
+        else:
+            resp = {"jsonrpc": "2.0", "id": mid, "result": {}}
+        sys.stdout.write(json.dumps(resp) + "\\n")
+        sys.stdout.flush()
+""")
+
+    result = runner.invoke(main, [
+        "generate",
+        "--server", f"{sys.executable} {ansi_server}",
+        "--dry-run"
+    ])
+
+    assert result.exit_code == 0
+    # ANSI escape characters must not appear in output
+    assert "\x1b" not in result.output
+    assert "\x07" not in result.output
+    assert "InjectedTool" in result.output
+
+
