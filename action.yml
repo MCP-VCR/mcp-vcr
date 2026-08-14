@@ -21,7 +21,7 @@ inputs:
   mcp-vcr-version:
     description: 'Version of mcp-vcr package to install'
     required: false
-    default: '0.2.0'
+    default: '0.2.1'
 runs:
   using: 'composite'
   steps:
