@@ -151,10 +151,15 @@ def validate(path: Path):
 @click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
 @click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
 @click.option('--format', 'output_format', type=click.Choice(['yaml', 'ndjson']), default='yaml', help="Transcript output format (default: yaml).")
-@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stderr.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON envelope to stderr (stdout is reserved for MCP proxy protocol traffic).")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
 def record(output, name, no_redact, config, transport, sse_url, sse_header, output_format, json_output, server_args):
-    """Record an MCP session by proxying traffic to a server."""
+    """Record an MCP session by proxying traffic to a server.
+    
+    Stream Contract:
+      When using --json with record, the structured JSON envelope is written to stderr
+      because stdout is reserved as the dedicated transport data pipe for MCP stdio proxy traffic.
+    """
     args = list(server_args)
     if args and args[0] == '--':
         args = args[1:]
