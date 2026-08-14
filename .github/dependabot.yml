@@ -1,0 +1,46 @@
+version: 2
+updates:
+  # Maintain dependencies for the main Python package
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "23:00"
+      timezone: "Asia/Kolkata"
+    cooldown:
+      default-days: 14
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+
+  # Maintain dependencies for the pytest-mcp-vcr plugin
+  - package-ecosystem: "pip"
+    directory: "/plugins/pytest-mcp-vcr"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "23:00"
+      timezone: "Asia/Kolkata"
+    cooldown:
+      default-days: 14
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+
+  # Maintain GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "23:00"
+      timezone: "Asia/Kolkata"
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns:
+          - "*"
