@@ -5,6 +5,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "friday"
+      time: "23:00"
+      timezone: "Asia/Kolkata"
+    cooldown:
+      default-days: 14
     groups:
       dependencies:
         patterns:
@@ -15,6 +20,11 @@ updates:
     directory: "/plugins/pytest-mcp-vcr"
     schedule:
       interval: "weekly"
+      day: "friday"
+      time: "23:00"
+      timezone: "Asia/Kolkata"
+    cooldown:
+      default-days: 14
     groups:
       dependencies:
         patterns:
@@ -25,6 +35,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "friday"
+      time: "23:00"
+      timezone: "Asia/Kolkata"
+    cooldown:
+      default-days: 14
     groups:
       actions:
         patterns:
