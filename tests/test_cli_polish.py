@@ -213,3 +213,74 @@ def test_redactor_enabled_disabled():
     unredacted = r_disabled.redact(payload)
     assert unredacted["password"] == "mypassword"
     assert unredacted["normal_field"] == "hello"
+
+
+def test_list_json_flag(temp_sessions_dir):
+    """Verify that mcp-vcr list --json outputs a structured JSON envelope."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["list", "--json", "--dir", str(temp_sessions_dir)])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["status"] == "ok"
+    assert data["command"] == "list"
+    assert data["sessions_dir"] == str(temp_sessions_dir)
+    assert isinstance(data["sessions"], list)
+    assert len(data["sessions"]) == 3
+    assert data["sessions"][0]["session_id"] == "aaaa3333"
+
+
+def test_list_json_format_mutual_exclusion(temp_sessions_dir):
+    """Verify that passing --json and --format together errors with exit code 2."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["list", "--json", "--format", "text", "--dir", str(temp_sessions_dir)])
+    assert result.exit_code == 2
+    assert "ERROR: --json and --format are mutually exclusive." in result.output
+
+
+def test_diff_json_format_mutual_exclusion(temp_sessions_dir):
+    """Verify that diff with both --json and --format errors with exit code 2."""
+    runner = CliRunner()
+    path_a = temp_sessions_dir / "session_a.yaml"
+    path_b = temp_sessions_dir / "session_b.yaml"
+    result = runner.invoke(main, ["diff", str(path_a), str(path_b), "--json", "--format", "text"])
+    assert result.exit_code == 2
+    assert "ERROR: --json and --format are mutually exclusive." in result.output
+
+
+def test_inspect_json_flag(temp_sessions_dir):
+    """Verify that inspect --json outputs metadata and stats, but omits messages by default."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["inspect", "bbbb", "--json", "--dir", str(temp_sessions_dir)])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["status"] == "ok"
+    assert data["command"] == "inspect"
+    assert data["session_id"] == "bbbb2222"
+    assert "session_file" in data
+    assert data["metadata"]["client_hint"] == "test-client-b"
+    assert data["stats"]["total_messages"] == 2
+    assert "tools/list" in data["methods"]
+    assert "messages" not in data
+
+
+def test_inspect_json_with_messages(temp_sessions_dir):
+    """Verify that inspect --json --messages includes the messages array."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["inspect", "bbbb", "--json", "--messages", "--dir", str(temp_sessions_dir)])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["status"] == "ok"
+    assert "messages" in data
+    assert len(data["messages"]) == 2
+
+
+def test_inspect_json_error_not_found(temp_sessions_dir):
+    """Verify that inspect --json emits error envelope on failure."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["inspect", "not_exist", "--json", "--dir", str(temp_sessions_dir)])
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data["status"] == "error"
+    assert data["command"] == "inspect"
+    assert "error" in data
+
