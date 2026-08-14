@@ -1,18 +1,31 @@
 import asyncio
-import click
+import glob
+import json
 import logging
 import re
 import secrets
+import shlex
 import sys
-import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from .validator import validate_file, ValidationError
-from .transports.stdio import run_proxy
+from urllib.parse import urlparse, urlunparse
+
+import click
+import yaml
+
+from .config import Config, ConfigError
+from .diff import format_github_diff, format_json_diff, format_text_diff, run_diff
+from .formats import iter_messages
 from .interceptor import MessageInterceptor
+from .json_output import emit_json, error_envelope
 from .recorder import TranscriptRecorder
 from .redactor import Redactor
+from .replay import ReplayEngine
+from .snapshot import _run_verify_impl, run_snapshot, run_verify
+from .transports import StdioTransport, run_proxy_with_transport
+from .transports.stdio import run_proxy
+from .validator import ValidationError, validate_file
 
 logger = logging.getLogger("mcp-vcr.cli")
 
@@ -28,6 +41,11 @@ def _sanitize_url(url: str) -> str:
         return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, "", ""))
     except Exception:
         return "<REDACTED_URL>"
+
+class SseSettingsError(Exception):
+    """Raised when SSE settings cannot be resolved."""
+    pass
+
 
 def _resolve_sse_settings(config_path, sse_url, sse_header, snapshot_path=None):
     from .config import Config, ConfigError
@@ -47,8 +65,7 @@ def _resolve_sse_settings(config_path, sse_url, sse_header, snapshot_path=None):
             
     resolved_url = sse_url or transport_cfg.get("sse_url")
     if not resolved_url:
-        click.secho("ERROR: --sse-url is required when using SSE transport.", fg="red", err=True)
-        sys.exit(1)
+        raise SseSettingsError("--sse-url is required when using SSE transport.")
         
     headers = dict(transport_cfg.get("headers", {}))
     if sse_header:
@@ -134,15 +151,25 @@ def validate(path: Path):
 @click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
 @click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
 @click.option('--format', 'output_format', type=click.Choice(['yaml', 'ndjson']), default='yaml', help="Transcript output format (default: yaml).")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON envelope to stderr (stdout is reserved for MCP proxy protocol traffic).")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def record(output, name, no_redact, config, transport, sse_url, sse_header, output_format, server_args):
-    """Record an MCP session by proxying traffic to a server."""
+def record(output, name, no_redact, config, transport, sse_url, sse_header, output_format, json_output, server_args):
+    """Record an MCP session by proxying traffic to a server.
+    
+    Stream Contract:
+      When using --json with record, the structured JSON envelope is written to stderr
+      because stdout is reserved as the dedicated transport data pipe for MCP stdio proxy traffic.
+    """
     args = list(server_args)
     if args and args[0] == '--':
         args = args[1:]
         
     if transport == 'stdio' and not args:
-        click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
+        err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+        if json_output:
+            emit_json(error_envelope("record", err_msg), err=True)
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     # Determine output folder and filename
@@ -170,25 +197,35 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
 
     headers = {}
     if transport == 'sse':
-        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=filepath)
+        try:
+            sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=filepath)
+        except SseSettingsError as e:
+            if json_output:
+                emit_json(error_envelope("record", str(e)), err=True)
+            else:
+                click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
             
     # Validate startup folders
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        click.secho(f"ERROR: Cannot create output directory '{target_dir}': {e}. What to try: specify a valid, writable path with the --output flag.", fg="red", err=True)
+        err_msg = f"Cannot create output directory '{target_dir}': {e}. What to try: specify a valid, writable path with the --output flag."
+        if json_output:
+            emit_json(error_envelope("record", err_msg), err=True)
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     # Initialize redactor
     try:
         redactor = Redactor(config_path=config, enabled=not no_redact, snapshot_path=filepath)
     except Exception as e:
-        click.secho(
-            f"ERROR: Failed to initialize redaction/config: {e}. "
-            "What to try: validate your --config file or retry with --no-redact.",
-            fg="red",
-            err=True,
-        )
+        err_msg = f"Failed to initialize redaction/config: {e}. What to try: validate your --config file or retry with --no-redact."
+        if json_output:
+            emit_json(error_envelope("record", err_msg), err=True)
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
     
     # Sanitize SSE URL for recording metadata (remove credentials/query string)
@@ -212,7 +249,11 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     from .transports import StdioTransport, run_proxy_with_transport
     if transport == 'sse':
         if SseTransport is None:
-            click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
+            err_msg = "SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]"
+            if json_output:
+                emit_json(error_envelope("record", err_msg), err=True)
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             sys.exit(1)
         transport_inst = SseTransport(sse_url=sse_url, headers=headers)
         click.secho(f"Starting proxy for SSE server: {sanitized_sse_url}", fg="cyan", err=True)
@@ -225,23 +266,52 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     try:
         recorder.start_session()
     except Exception as e:
-        click.secho(f"ERROR: Failed to open session file: {e}. What to try: check write permissions for '{filepath}'.", fg="red", err=True)
+        err_msg = f"Failed to open session file: {e}. What to try: check write permissions for '{filepath}'."
+        if json_output:
+            emit_json(error_envelope("record", err_msg), err=True)
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
 
     exit_code = 1
+    has_failed = False
     try:
         exit_code = asyncio.run(run_proxy_with_transport(transport_inst, interceptor=interceptor, recorder=recorder))
     except Exception as e:
         logger.debug("Proxy failed with exception", exc_info=True)
-        click.secho(f"ERROR: Proxy failed: {e}.", fg="red", err=True)
+        has_failed = True
+        if json_output:
+            emit_json(error_envelope("record", f"Proxy failed: {e}"), err=True)
+        else:
+            click.secho(f"ERROR: Proxy failed: {e}.", fg="red", err=True)
+        sys.exit(1)
     finally:
         try:
             recorder.close()
         except Exception as e:
-            click.secho(f"ERROR: Failed to safely save transcript: {e}.", fg="red", err=True)
-            exit_code = 1
+            if not has_failed:
+                if json_output:
+                    emit_json(error_envelope("record", f"Failed to safely save transcript: {e}"), err=True)
+                else:
+                    click.secho(f"ERROR: Failed to safely save transcript: {e}.", fg="red", err=True)
+                sys.exit(1)
             
+    if json_output:
+        msg_count = 0
+        if filepath.exists():
+            try:
+                msg_count = sum(1 for _ in iter_messages(filepath))
+            except Exception:
+                msg_count = 0
+        emit_json({
+            "status": "ok" if exit_code == 0 else "fail",
+            "command": "record",
+            "session_file": str(filepath),
+            "message_count": msg_count
+        }, err=True)
     sys.exit(exit_code)
+
+
 
 @main.command(context_settings=dict(
     ignore_unknown_options=True,
@@ -255,8 +325,9 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
 @click.option('--sse-url', type=str, default=None, help="SSE endpoint URL.")
 @click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def replay(session, timeout, strict, config, transport, sse_url, sse_header, timing_faithful, server_args):
+def replay(session, timeout, strict, config, transport, sse_url, sse_header, timing_faithful, json_output, server_args):
     """Replay an MCP session against a server.
     
     Example:
@@ -268,7 +339,14 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
         
     transport_inst = None
     if transport == 'sse' or sse_url:
-        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=Path(session))
+        try:
+            sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=Path(session))
+        except SseSettingsError as e:
+            if json_output:
+                emit_json(error_envelope("replay", str(e)))
+            else:
+                click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
         
         SseTransport = None
         try:
@@ -277,13 +355,21 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
             pass
 
         if SseTransport is None:
-            click.secho("ERROR: SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]", fg="red", err=True)
+            err_msg = "SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]"
+            if json_output:
+                emit_json(error_envelope("replay", err_msg))
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             sys.exit(1)
         transport_inst = SseTransport(sse_url=sse_url, headers=headers)
         click.secho(f"Starting replay of {session} against SSE server: {_sanitize_url(sse_url)}", fg="cyan", err=True)
     else:
         if transport == 'stdio' and not args:
-            click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
+            err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+            if json_output:
+                emit_json(error_envelope("replay", err_msg))
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             sys.exit(1)
         if args:
             from .transports import StdioTransport
@@ -296,7 +382,11 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
     try:
         engine = ReplayEngine(config_path=config, timeout_ms=timeout, timing_faithful=timing_faithful)
     except Exception as e:
-        click.secho(f"ERROR: Configuration error: {e}. What to try: check the validity of your configuration file or options.", fg="red", err=True)
+        err_msg = f"Configuration error: {e}. What to try: check the validity of your configuration file or options."
+        if json_output:
+            emit_json(error_envelope("replay", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     try:
@@ -305,28 +395,78 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
         # Check if the output has incomplete: true in meta
         with open(output_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        if data and isinstance(data, dict) and data.get("meta", {}).get("incomplete"):
-            reason = data["meta"].get("incomplete_reason", "unknown")
-            click.secho(f"ERROR: Replay was incomplete due to: {reason}", fg="red", err=True)
-            sys.exit(1)
             
+        incomplete = bool(data and isinstance(data, dict) and data.get("meta", {}).get("incomplete"))
+        reason = data["meta"].get("incomplete_reason", "unknown") if incomplete else None
+        
+        diff_dict = None
+        has_changes = False
         if strict:
-            from .diff import run_diff, format_text_diff
+            from .diff import run_diff, format_text_diff, format_json_diff
+            import json as _json
             try:
                 changes = run_diff(session, output_path, mode="strict")
                 has_changes = any(group["changes"] for group in changes.values())
                 if has_changes:
-                    click.secho("ERROR: Strict replay failed: responses differ from recorded session.", fg="red", err=True)
-                    click.echo(format_text_diff(changes), err=True)
-                    sys.exit(1)
+                    diff_dict = _json.loads(format_json_diff(changes))
+                    if not json_output:
+                        click.secho("ERROR: Strict replay failed: responses differ from recorded session.", fg="red", err=True)
+                        click.echo(format_text_diff(changes), err=True)
             except Exception as e:
-                click.secho(f"ERROR: Diff comparison failed: {e}", fg="red", err=True)
+                if json_output:
+                    emit_json(error_envelope("replay", f"Diff comparison failed: {e}"))
+                else:
+                    click.secho(f"ERROR: Diff comparison failed: {e}", fg="red", err=True)
                 sys.exit(1)
                 
-        click.secho(f"Replay completed successfully. Output stored at {output_path}", fg="green")
+        if incomplete:
+            if json_output:
+                emit_json({
+                    "status": "fail",
+                    "command": "replay",
+                    "session_file": str(session),
+                    "replay_file": str(output_path),
+                    "incomplete": True,
+                    "strict": strict,
+                    "diff": diff_dict
+                })
+            else:
+                click.secho(f"ERROR: Replay was incomplete due to: {reason}", fg="red", err=True)
+            sys.exit(1)
             
+        if strict and has_changes:
+            if json_output:
+                emit_json({
+                    "status": "fail",
+                    "command": "replay",
+                    "session_file": str(session),
+                    "replay_file": str(output_path),
+                    "incomplete": False,
+                    "strict": True,
+                    "diff": diff_dict
+                })
+            sys.exit(1)
+            
+        if json_output:
+            emit_json({
+                "status": "ok",
+                "command": "replay",
+                "session_file": str(session),
+                "replay_file": str(output_path),
+                "incomplete": False,
+                "strict": strict,
+                "diff": None
+            })
+        else:
+            click.secho(f"Replay completed successfully. Output stored at {output_path}", fg="green")
+        sys.exit(0)
+    except SystemExit:
+        raise
     except Exception as e:
-        click.secho(f"ERROR: Replay failed: {e}", fg="red", err=True)
+        if json_output:
+            emit_json(error_envelope("replay", e))
+        else:
+            click.secho(f"ERROR: Replay failed: {e}", fg="red", err=True)
         sys.exit(1)
 
 @main.command(context_settings=dict(
@@ -334,9 +474,10 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
     allow_extra_args=True,
 ))
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.argument('session_glob', type=str)
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=True)
-def check(session_glob, timing_faithful, server_args):
+def check(session_glob, timing_faithful, json_output, server_args):
     """Replay a glob of sessions against a server and exit 1 on regression/failure.
     
     Example:
@@ -347,64 +488,122 @@ def check(session_glob, timing_faithful, server_args):
         args = args[1:]
         
     if not args:
-        click.secho("ERROR: No server command specified. What to try: pass the server command and arguments after a '--' separator.", fg="red", err=True)
+        err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+        if json_output:
+            emit_json(error_envelope("check", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
-    # Resolve the glob
     import glob
+    import json as _json
     matched_paths = glob.glob(session_glob, recursive=True)
     if not matched_paths:
-        click.secho(f"ERROR: No transcripts matched the glob: {session_glob}. What to try: verify the glob pattern matches existing YAML files.", fg="red", err=True)
+        err_msg = f"No transcripts matched the glob: {session_glob}. What to try: verify the glob pattern matches existing YAML files."
+        if json_output:
+            emit_json(error_envelope("check", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     matched_paths = sorted([Path(p) for p in matched_paths if Path(p).is_file()])
     if not matched_paths:
-        click.secho(f"ERROR: No files matched the glob: {session_glob}.", fg="red", err=True)
+        err_msg = f"No files matched the glob: {session_glob}."
+        if json_output:
+            emit_json(error_envelope("check", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     from .replay import ReplayEngine
-    from .diff import run_diff, format_text_diff
+    from .diff import run_diff, format_text_diff, format_json_diff
     
     try:
         engine = ReplayEngine(timing_faithful=timing_faithful)
     except Exception as e:
-        click.secho(
-            f"ERROR: Configuration error: {e}. "
-            "What to try: check the validity of your configuration file or options.",
-            fg="red",
-            err=True,
-        )
+        err_msg = f"Configuration error: {e}. What to try: check the validity of your configuration file or options."
+        if json_output:
+            emit_json(error_envelope("check", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
     
     all_ok = True
+    passed_count = 0
+    failed_count = 0
+    results_list = []
+    
     for path in matched_paths:
-        click.secho(f"Checking session: {path.name}", fg="cyan")
+        click.secho(f"Checking session: {path.name}", fg="cyan", err=True)
         try:
             output_path = asyncio.run(engine.run_replay(path, server_args=args))
             
-            # Check if output transcript has incomplete: true
             with open(output_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             if data and isinstance(data, dict) and data.get("meta", {}).get("incomplete"):
                 reason = data["meta"].get("incomplete_reason", "unknown")
-                click.secho(f"FAIL: {path.name} was incomplete due to: {reason}", fg="red", err=True)
+                if not json_output:
+                    click.secho(f"FAIL: {path.name} was incomplete due to: {reason}", fg="red", err=True)
+                results_list.append({
+                    "session_file": str(path),
+                    "status": "fail",
+                    "message": f"Incomplete due to: {reason}",
+                    "diff": None
+                })
                 all_ok = False
+                failed_count += 1
                 continue
                 
-            # Perform semantic diff comparison
             changes = run_diff(path, output_path, mode="semantic")
             has_changes = any(group["changes"] for group in changes.values())
             
             if has_changes:
-                click.secho(f"FAIL: {path.name} failed with regression(s)", fg="red", err=True)
-                click.echo(format_text_diff(changes), err=True)
+                if not json_output:
+                    click.secho(f"FAIL: {path.name} failed with regression(s)", fg="red", err=True)
+                    click.echo(format_text_diff(changes), err=True)
+                diff_dict = _json.loads(format_json_diff(changes))
+                results_list.append({
+                    "session_file": str(path),
+                    "status": "fail",
+                    "message": "failed with regression(s)",
+                    "diff": diff_dict
+                })
                 all_ok = False
+                failed_count += 1
             else:
-                click.secho(f"PASS: {path.name} replayed and matched perfectly", fg="green")
+                if not json_output:
+                    click.secho(f"PASS: {path.name} replayed and matched perfectly", fg="green", err=True)
+                results_list.append({
+                    "session_file": str(path),
+                    "status": "ok",
+                    "message": "replayed and matched perfectly",
+                    "diff": None
+                })
+                passed_count += 1
         except Exception as e:
-            click.secho(f"FAIL: {path.name} failed with exception: {e}", fg="red", err=True)
+            if not json_output:
+                click.secho(f"FAIL: {path.name} failed with exception: {e}", fg="red", err=True)
+            results_list.append({
+                "session_file": str(path),
+                "status": "fail",
+                "message": f"failed with exception: {e}",
+                "diff": None
+            })
             all_ok = False
+            failed_count += 1
             
+    if json_output:
+        emit_json({
+            "status": "ok" if all_ok else "fail",
+            "command": "check",
+            "glob": session_glob,
+            "results": results_list,
+            "summary": {
+                "total": len(matched_paths),
+                "passed": passed_count,
+                "failed": failed_count
+            }
+        })
     if not all_ok:
         sys.exit(1)
     sys.exit(0)
@@ -413,15 +612,23 @@ def check(session_glob, timing_faithful, server_args):
 @click.argument('transcript_a', type=click.Path(exists=True, path_type=Path))
 @click.argument('transcript_b', type=click.Path(exists=True, path_type=Path))
 @click.option('--mode', type=click.Choice(['structural', 'semantic', 'strict']), default='structural', help="Diff mode (default: structural).")
-@click.option('--format', 'format_type', type=click.Choice(['text', 'json', 'github']), default='text', help="Output format (default: text).")
+@click.option('--format', 'format_type', type=click.Choice(['text', 'json', 'github']), default=None, help="Output format (default: text).")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.option('--ignore', type=str, default=None, help="Comma-separated JSON paths to exclude from comparison.")
-def diff(transcript_a, transcript_b, mode, format_type, ignore):
+def diff(transcript_a, transcript_b, mode, format_type, json_output, ignore):
     """Compare two session transcripts and report structural or semantic differences.
     
     Example:
       mcp-vcr diff sessions/session_A.yaml sessions/session_B.yaml --mode semantic
     """
+    if json_output and format_type is not None:
+        click.secho("ERROR: --json and --format are mutually exclusive.", fg="red", err=True)
+        sys.exit(2)
+        
+    actual_format = format_type if format_type is not None else 'text'
+
     from .diff import run_diff, format_text_diff, format_json_diff, format_github_diff
+    import json as _json
     
     ignore_list = None
     if ignore:
@@ -429,38 +636,70 @@ def diff(transcript_a, transcript_b, mode, format_type, ignore):
         
     try:
         changes_by_id = run_diff(transcript_a, transcript_b, mode=mode, ignore_fields=ignore_list)
-        
         has_changes = any(group["changes"] for group in changes_by_id.values())
         
-        if format_type == "json":
-            output = format_json_diff(changes_by_id)
-            click.echo(output)
-        elif format_type == "github":
-            output = format_github_diff(changes_by_id, transcript_b.name)
-            if output:
-                click.echo(output)
+        if json_output:
+            raw_diff = _json.loads(format_json_diff(changes_by_id))
+            emit_json({
+                "status": "fail" if has_changes else "ok",
+                "command": "diff",
+                "transcript_a": str(transcript_a),
+                "transcript_b": str(transcript_b),
+                "mode": mode,
+                "changes": raw_diff["changes"],
+                "summary": raw_diff["summary"]
+            })
         else:
-            output = format_text_diff(changes_by_id)
-            click.echo(output)
+            if actual_format == "json":
+                output = format_json_diff(changes_by_id)
+                click.echo(output)
+            elif actual_format == "github":
+                output = format_github_diff(changes_by_id, transcript_b.name)
+                if output:
+                    click.echo(output)
+            else:
+                output = format_text_diff(changes_by_id)
+                click.echo(output)
             
         if has_changes:
             sys.exit(1)
         sys.exit(0)
+    except SystemExit:
+        raise
     except Exception as e:
-        click.secho(f"ERROR: Diff failed: {e}", fg="red", err=True)
+        if json_output:
+            emit_json(error_envelope("diff", e))
+        else:
+            click.secho(f"ERROR: Diff failed: {e}", fg="red", err=True)
         sys.exit(1)
 
+
 @main.command(name="list")
-@click.option('--format', 'format_type', type=click.Choice(['text', 'json']), default='text', help="Output format (default: text).")
+@click.option('--format', 'format_type', type=click.Choice(['text', 'json']), default=None, help="Output format (default: text).")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.option('--dir', 'sessions_dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path), default=Path("sessions"), help="Path to sessions directory.")
-def list_sessions(format_type, sessions_dir):
+def list_sessions(format_type, json_output, sessions_dir):
     """List all recorded sessions in the sessions directory.
     
     Example:
       mcp-vcr list --format json
+      mcp-vcr list --json
     """
+    if json_output and format_type is not None:
+        click.secho("ERROR: --json and --format are mutually exclusive.", fg="red", err=True)
+        sys.exit(2)
+
+    actual_format = format_type if format_type is not None else 'text'
+
     if not sessions_dir.exists() or not sessions_dir.is_dir():
-        if format_type == "json":
+        if json_output:
+            emit_json({
+                "status": "ok",
+                "command": "list",
+                "sessions_dir": str(sessions_dir),
+                "sessions": []
+            })
+        elif actual_format == "json":
             click.echo("[]")
         else:
             click.secho(f"No sessions found (directory '{sessions_dir}' does not exist).", fg="yellow")
@@ -492,8 +731,14 @@ def list_sessions(format_type, sessions_dir):
     # Sort newest first by date string
     sessions.sort(key=lambda x: x["date"] or "", reverse=True)
     
-    if format_type == "json":
-        import json
+    if json_output:
+        emit_json({
+            "status": "ok",
+            "command": "list",
+            "sessions_dir": str(sessions_dir),
+            "sessions": sessions
+        })
+    elif actual_format == "json":
         click.echo(json.dumps(sessions, indent=2))
     else:
         if not sessions:
@@ -511,15 +756,20 @@ def list_sessions(format_type, sessions_dir):
 @main.command()
 @click.argument('prefix', type=str)
 @click.option('--messages', is_flag=True, help="Show full message list with timestamps.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.option('--dir', 'sessions_dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path), default=Path("sessions"), help="Path to sessions directory.")
-def inspect(prefix, messages, sessions_dir):
+def inspect(prefix, messages, json_output, sessions_dir):
     """Show details of a single session, identified by ID prefix (e.g. short SHA).
     
     Example:
       mcp-vcr inspect abcdef12 --messages
     """
     if not sessions_dir.exists() or not sessions_dir.is_dir():
-        click.secho(f"ERROR: Sessions directory '{sessions_dir}' does not exist.", fg="red", err=True)
+        err_msg = f"Sessions directory '{sessions_dir}' does not exist."
+        if json_output:
+            emit_json(error_envelope("inspect", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     yaml_files = sorted(list(sessions_dir.glob("*.yaml")) + list(sessions_dir.glob("*.yml")))
@@ -542,24 +792,32 @@ def inspect(prefix, messages, sessions_dir):
             continue
             
     if not matches:
-        click.secho(f"ERROR: No session found with ID prefix '{prefix}'", fg="red", err=True)
+        err_msg = f"No session found with ID prefix '{prefix}'"
+        if json_output:
+            emit_json(error_envelope("inspect", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
         
     if len(matches) > 1:
-        click.secho(f"ERROR: Ambiguous prefix '{prefix}'. Multiple sessions matched:", fg="red", err=True)
-        for f_path, session_id, _ in matches:
-            click.echo(f"  {session_id} -> {f_path.name}", err=True)
+        err_msg = f"Ambiguous prefix '{prefix}'. Multiple sessions matched."
+        if json_output:
+            emit_json(error_envelope("inspect", err_msg))
+        else:
+            click.secho(f"ERROR: Ambiguous prefix '{prefix}'. Multiple sessions matched:", fg="red", err=True)
+            for f_path, session_id, _ in matches:
+                click.echo(f"  {session_id} -> {f_path.name}", err=True)
         sys.exit(1)
         
     f_path, session_id, data = matches[0]
     meta = data.get("meta", {})
     msgs = data.get("messages", [])
     if not isinstance(msgs, list):
-        click.secho(
-            f"ERROR: Session '{f_path.name}' has invalid 'messages' format (expected a list).",
-            fg="red",
-            err=True,
-        )
+        err_msg = f"Session '{f_path.name}' has invalid 'messages' format (expected a list)."
+        if json_output:
+            emit_json(error_envelope("inspect", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
     
     # Analyze messages
@@ -576,6 +834,25 @@ def inspect(prefix, messages, sessions_dir):
             if method:
                 methods.add(method)
                 
+    if json_output:
+        payload_data = {
+            "status": "ok",
+            "command": "inspect",
+            "session_id": session_id,
+            "session_file": str(f_path),
+            "metadata": meta,
+            "stats": {
+                "total_messages": len(msgs),
+                "c2s": c2s_count,
+                "s2c": s2c_count
+            },
+            "methods": sorted(list(methods))
+        }
+        if messages:
+            payload_data["messages"] = msgs
+        emit_json(payload_data)
+        return
+
     # Print session info
     click.secho(f"Session Inspection: {session_id}", fg="cyan", bold=True)
     click.echo(f"File Path: {f_path}")
@@ -639,7 +916,6 @@ def snapshot(session_yaml):
     Example:
       mcp-vcr snapshot sessions/my_session.yaml
     """
-    from .snapshot import run_snapshot
     try:
         golden_path = run_snapshot(session_yaml)
         click.secho(f"Golden snapshot created: {golden_path}", fg="green")
@@ -654,9 +930,10 @@ def snapshot(session_yaml):
 @click.option('--update', is_flag=True, help="Update golden snapshots by overwriting with new replayed responses.")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.argument('snapshots_dir', type=click.Path(exists=False, file_okay=True, dir_okay=True, path_type=Path))
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def verify(update, timing_faithful, config, snapshots_dir, server_args):
+def verify(update, timing_faithful, config, json_output, snapshots_dir, server_args):
     """Replay a server against its golden snapshots and report regressions.
     
     Example:
@@ -666,13 +943,51 @@ def verify(update, timing_faithful, config, snapshots_dir, server_args):
     if args and args[0] == '--':
         args = args[1:]
         
-    from .snapshot import run_verify
-    try:
-        exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update, timing_faithful=timing_faithful, config_path=config))
-    except Exception as e:
-        click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
-        sys.exit(1)
-    sys.exit(exit_code)
+    if json_output:
+        try:
+            result = asyncio.run(_run_verify_impl(
+                snapshots_dir,
+                server_args=args or None,
+                update=update,
+                timing_faithful=timing_faithful,
+                config_path=config
+            ))
+            if "error" in result and not result.get("results"):
+                emit_json(error_envelope("verify", result["error"]))
+                sys.exit(result["exit_code"])
+                
+            has_failures = result["summary"]["failed"] > 0
+            clean_results = []
+            for r in result["results"]:
+                clean_results.append({
+                    "snapshot": r["snapshot"],
+                    "source": r["source"],
+                    "status": r["status"],
+                    "message": r["message"],
+                    "diff": r["diff"]
+                })
+            emit_json({
+                "status": "fail" if has_failures else "ok",
+                "command": "verify",
+                "snapshots_dir": str(snapshots_dir),
+                "update": update,
+                "results": clean_results,
+                "summary": result["summary"]
+            })
+            sys.exit(result["exit_code"])
+        except SystemExit:
+            raise
+        except Exception as e:
+            emit_json(error_envelope("verify", e))
+            sys.exit(1)
+    else:
+        try:
+            exit_code = asyncio.run(run_verify(snapshots_dir, server_args=args or None, update=update, timing_faithful=timing_faithful, config_path=config))
+        except Exception as e:
+            click.secho(f"ERROR: Verification failed: {e}", fg="red", err=True)
+            sys.exit(1)
+        sys.exit(exit_code)
+
 
 def _is_stdin_tty() -> bool:
     return sys.stdin.isatty()
@@ -898,7 +1213,11 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
 
     headers = {}
     if transport == 'sse':
-        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+        try:
+            sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+        except SseSettingsError as e:
+            click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
 
     exit_code = asyncio.run(run_generate(
         args=args,

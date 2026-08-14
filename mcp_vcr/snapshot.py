@@ -1,14 +1,17 @@
 import copy
-import click
-import yaml
+import json
 import logging
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import click
+import yaml
+
+from .diff import run_diff, format_text_diff, format_json_diff
 from .normalizer import NormalizerChain
 from .replay import ReplayEngine
-from .diff import run_diff, format_text_diff
 from .validator import validate_file
-import traceback
 
 logger = logging.getLogger("mcp-vcr.snapshot")
 
@@ -95,18 +98,24 @@ def run_snapshot(session_yaml_path: Path) -> Path:
     
     return golden_path
 
-async def run_verify(
+
+async def _run_verify_impl(
     snapshots_dir: Path,
     server_args: Optional[List[str]] = None,
     update: bool = False,
     timing_faithful: Optional[bool] = None,
     config_path: Optional[Path] = None
-) -> int:
-    """Replay sessions against a server, diff normalized results vs golden snapshots, and report regressions or update goldens."""
+) -> Dict[str, Any]:
+    """Core verification logic. Returns structured results dictionary."""
     p_snapshots = Path(snapshots_dir)
     if not p_snapshots.exists():
         click.secho(f"ERROR: Path '{snapshots_dir}' does not exist.", fg="red", err=True)
-        return 1
+        return {
+            "results": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "updated": 0, "unchanged": 0},
+            "exit_code": 1,
+            "error": f"Path '{snapshots_dir}' does not exist."
+        }
         
     if p_snapshots.is_file():
         golden_files = [p_snapshots]
@@ -118,7 +127,12 @@ async def run_verify(
             
     if not golden_files:
         click.secho(f"ERROR: No snapshots found in '{snapshots_dir}'", fg="red", err=True)
-        return 1
+        return {
+            "results": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "updated": 0, "unchanged": 0},
+            "exit_code": 1,
+            "error": f"No snapshots found in '{snapshots_dir}'"
+        }
         
     engine = ReplayEngine(config_path=config_path, timing_faithful=timing_faithful)
     
@@ -127,15 +141,15 @@ async def run_verify(
     updated_count = 0
     unchanged_count = 0
     
-    results = {}
+    structured_results: List[Dict[str, Any]] = []
     
     for golden_path in golden_files:
         source_path = find_source_session(golden_path)
         if source_path is None:
-            click.secho(f"WARNING: Source session for {golden_path.name} not found in sessions/. Replaying golden snapshot itself as fallback.", fg="yellow")
+            click.secho(f"WARNING: Source session for {golden_path.name} not found in sessions/. Replaying golden snapshot itself as fallback.", fg="yellow", err=True)
             source_path = golden_path
             
-        click.secho(f"Verifying snapshot: {golden_path.name} (source: {source_path.name})", fg="cyan")
+        click.secho(f"Verifying snapshot: {golden_path.name} (source: {source_path.name})", fg="cyan", err=True)
         
         try:
             # 1. Replay original transcript
@@ -147,7 +161,14 @@ async def run_verify(
             # 2. Check if replay was incomplete (treated as failure)
             if replay_data.get("meta", {}).get("incomplete"):
                 reason = replay_data["meta"].get("incomplete_reason", "unknown")
-                results[golden_path] = ("fail", f"Replay was incomplete due to: {reason}", None)
+                structured_results.append({
+                    "snapshot": golden_path.name,
+                    "source": source_path.name,
+                    "status": "fail",
+                    "message": f"Replay was incomplete due to: {reason}",
+                    "diff": None,
+                    "detail": None
+                })
                 failed_count += 1
                 continue
                 
@@ -190,49 +211,129 @@ async def run_verify(
                     except Exception:
                         temp_path.unlink(missing_ok=True)
                         raise
-                    results[golden_path] = ("updated", "Golden snapshot updated with new replayed responses", None)
+                    structured_results.append({
+                        "snapshot": golden_path.name,
+                        "source": source_path.name,
+                        "status": "updated",
+                        "message": "Golden snapshot updated with new replayed responses",
+                        "diff": None,
+                        "detail": None
+                    })
                     updated_count += 1
                 else:
-                    results[golden_path] = ("unchanged", "Golden snapshot unchanged", None)
+                    structured_results.append({
+                        "snapshot": golden_path.name,
+                        "source": source_path.name,
+                        "status": "unchanged",
+                        "message": "Golden snapshot unchanged",
+                        "diff": None,
+                        "detail": None
+                    })
                     unchanged_count += 1
             else:
                 if has_changes:
                     diff_text = format_text_diff(changes)
-                    results[golden_path] = ("fail", "Regression detected", diff_text)
+                    diff_dict = json.loads(format_json_diff(changes))
+                    structured_results.append({
+                        "snapshot": golden_path.name,
+                        "source": source_path.name,
+                        "status": "fail",
+                        "message": "Regression detected",
+                        "diff": diff_dict,
+                        "detail": diff_text
+                    })
                     failed_count += 1
                 else:
-                    results[golden_path] = ("pass", "Golden snapshot matches replayed responses", None)
+                    structured_results.append({
+                        "snapshot": golden_path.name,
+                        "source": source_path.name,
+                        "status": "pass",
+                        "message": "Golden snapshot matches replayed responses",
+                        "diff": None,
+                        "detail": None
+                    })
                     passed_count += 1
                     
         except Exception as e:
             tb = traceback.format_exc()
-            results[golden_path] = ("fail", f"Verification encountered an error: {e}", tb)
+            structured_results.append({
+                "snapshot": golden_path.name,
+                "source": source_path.name if source_path else None,
+                "status": "fail",
+                "message": f"Verification encountered an error: {e}",
+                "diff": None,
+                "detail": tb
+            })
             failed_count += 1
-            
-    # Print results and summary
+
+    exit_code = 1 if failed_count > 0 else 0
+    return {
+        "results": structured_results,
+        "summary": {
+            "total": len(golden_files),
+            "passed": passed_count,
+            "failed": failed_count,
+            "updated": updated_count,
+            "unchanged": unchanged_count
+        },
+        "exit_code": exit_code
+    }
+
+
+def _print_verify_summary(result_data: Dict[str, Any], update: bool = False) -> None:
+    """Print human-readable final summary."""
     click.echo("\n--- Snapshot Summary ---")
-    for golden, (status, msg, detail) in results.items():
+    for item in result_data.get("results", []):
+        name = item.get("snapshot", "")
+        status = item.get("status", "")
+        msg = item.get("message", "")
+        detail = item.get("detail", "")
         if status == "pass":
-            click.secho(f"PASS: {golden.name}", fg="green")
+            click.secho(f"PASS: {name}", fg="green")
         elif status == "updated":
-            click.secho(f"UPDATED: {golden.name} ({msg})", fg="yellow")
+            click.secho(f"UPDATED: {name} ({msg})", fg="yellow")
         elif status == "unchanged":
-            click.secho(f"UNCHANGED: {golden.name}", fg="green")
+            click.secho(f"UNCHANGED: {name}", fg="green")
         else:
-            click.secho(f"FAIL: {golden.name} ({msg})", fg="red", err=True)
+            click.secho(f"FAIL: {name} ({msg})", fg="red", err=True)
             if detail:
                 click.echo(detail, err=True)
                 
+    summary = result_data.get("summary", {})
+    failed_count = summary.get("failed", 0)
+    updated_count = summary.get("updated", 0)
+    unchanged_count = summary.get("unchanged", 0)
+    passed_count = summary.get("passed", 0)
+    total = summary.get("total", 0)
+
     if update:
         if failed_count > 0:
             click.secho(f"\n{failed_count} snapshots failed during update. {updated_count} updated, {unchanged_count} unchanged.", fg="red", err=True)
-            return 1
-        click.secho(f"\nAll snapshots processed in update mode. {updated_count} updated, {unchanged_count} unchanged.", fg="green")
-        return 0
+        else:
+            click.secho(f"\nAll snapshots processed in update mode. {updated_count} updated, {unchanged_count} unchanged.", fg="green")
     else:
         if failed_count > 0:
-            click.secho(f"\nFAIL: {failed_count} of {len(golden_files)} snapshots failed verification.", fg="red", err=True)
-            return 1
+            click.secho(f"\nFAIL: {failed_count} of {total} snapshots failed verification.", fg="red", err=True)
         else:
             click.secho(f"\nAll {passed_count} snapshots passed.", fg="green")
-            return 0
+
+
+async def run_verify(
+    snapshots_dir: Path,
+    server_args: Optional[List[str]] = None,
+    update: bool = False,
+    timing_faithful: Optional[bool] = None,
+    config_path: Optional[Path] = None
+) -> int:
+    """Backward-compatible wrapper. Returns exit code only."""
+    result = await _run_verify_impl(
+        snapshots_dir=snapshots_dir,
+        server_args=server_args,
+        update=update,
+        timing_faithful=timing_faithful,
+        config_path=config_path
+    )
+    if "error" not in result or result["results"]:
+        _print_verify_summary(result, update=update)
+    return result["exit_code"]
+
