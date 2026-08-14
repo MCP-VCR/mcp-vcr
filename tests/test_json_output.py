@@ -273,12 +273,13 @@ def test_diff_json_flag_difference(sample_session_and_snapshot):
     assert "summary" in data
 
 
+
 def test_record_json_missing_server_command(tmp_path):
-    """Verify record --json without server command emits error envelope."""
+    """Verify record --json without server command emits error envelope to stderr."""
     runner = CliRunner()
     result = runner.invoke(main, ["record", "--json"])
     assert result.exit_code == 1
-    data = json.loads(result.stdout)
+    data = json.loads(result.stderr)
     assert data["status"] == "error"
     assert data["command"] == "record"
     assert "error" in data
@@ -287,7 +288,7 @@ def test_record_json_missing_server_command(tmp_path):
 import subprocess
 
 def test_record_json_success(regression_server_setup, tmp_path):
-    """Verify record --json captures interaction and emits envelope on exit."""
+    """Verify record --json captures interaction and emits envelope to stderr on exit."""
     server_path, _ = regression_server_setup
     session_file = tmp_path / "sessions" / "rec_test.yaml"
     init_msg = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
@@ -297,10 +298,10 @@ def test_record_json_success(regression_server_setup, tmp_path):
     ]
     proc = subprocess.run(cmd, input=f"{init_msg}\n", text=True, capture_output=True, timeout=10)
     assert proc.returncode == 0
-    # Extract the summary envelope emitted at the end of the proxy stdout stream
-    envelope_idx = proc.stdout.rfind("{\n  \"status\":")
-    assert envelope_idx != -1
-    envelope_str = proc.stdout[envelope_idx:]
+    # Extract the summary envelope emitted at the end of the proxy stderr stream
+    json_start = proc.stderr.find("{")
+    assert json_start != -1
+    envelope_str = proc.stderr[json_start:]
     data = json.loads(envelope_str)
     assert data["status"] == "ok"
     assert data["command"] == "record"
@@ -345,5 +346,24 @@ def test_verify_per_item_status_vocabulary(sample_session_and_snapshot):
     # 2. unchanged (update mode with no diff)
     res_unchanged = runner.invoke(main, ["verify", "--update", "--json", str(snapshots_dir), "--", sys.executable, str(server_path)])
     assert json.loads(res_unchanged.stdout)["results"][0]["status"] == "unchanged"
+
+
+def test_error_envelope_empty_fallback():
+    """Verify error_envelope fallback when str(error) is empty."""
+    from mcp_vcr.json_output import error_envelope
+    
+    class CustomEmptyError(Exception):
+        pass
+        
+    env = error_envelope("diff", CustomEmptyError())
+    assert env["status"] == "error"
+    assert env["command"] == "diff"
+    assert env["error"] == "CustomEmptyError"
+    
+    env_empty = error_envelope("diff", "")
+    assert env_empty["status"] == "error"
+    assert env_empty["command"] == "diff"
+    assert env_empty["error"] == "Unknown error"
+
 
 

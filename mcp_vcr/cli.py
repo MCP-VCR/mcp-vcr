@@ -42,6 +42,11 @@ def _sanitize_url(url: str) -> str:
     except Exception:
         return "<REDACTED_URL>"
 
+class SseSettingsError(Exception):
+    """Raised when SSE settings cannot be resolved."""
+    pass
+
+
 def _resolve_sse_settings(config_path, sse_url, sse_header, snapshot_path=None):
     from .config import Config, ConfigError
     transport_cfg = {}
@@ -60,8 +65,7 @@ def _resolve_sse_settings(config_path, sse_url, sse_header, snapshot_path=None):
             
     resolved_url = sse_url or transport_cfg.get("sse_url")
     if not resolved_url:
-        click.secho("ERROR: --sse-url is required when using SSE transport.", fg="red", err=True)
-        sys.exit(1)
+        raise SseSettingsError("--sse-url is required when using SSE transport.")
         
     headers = dict(transport_cfg.get("headers", {}))
     if sse_header:
@@ -147,7 +151,7 @@ def validate(path: Path):
 @click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
 @click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
 @click.option('--format', 'output_format', type=click.Choice(['yaml', 'ndjson']), default='yaml', help="Transcript output format (default: yaml).")
-@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stderr.")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
 def record(output, name, no_redact, config, transport, sse_url, sse_header, output_format, json_output, server_args):
     """Record an MCP session by proxying traffic to a server."""
@@ -158,7 +162,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     if transport == 'stdio' and not args:
         err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
         if json_output:
-            emit_json(error_envelope("record", err_msg))
+            emit_json(error_envelope("record", err_msg), err=True)
         else:
             click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
@@ -190,10 +194,12 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     if transport == 'sse':
         try:
             sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=filepath)
-        except SystemExit:
+        except SseSettingsError as e:
             if json_output:
-                emit_json(error_envelope("record", "--sse-url is required when using SSE transport."))
-            raise
+                emit_json(error_envelope("record", str(e)), err=True)
+            else:
+                click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
             
     # Validate startup folders
     try:
@@ -201,7 +207,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     except Exception as e:
         err_msg = f"Cannot create output directory '{target_dir}': {e}. What to try: specify a valid, writable path with the --output flag."
         if json_output:
-            emit_json(error_envelope("record", err_msg))
+            emit_json(error_envelope("record", err_msg), err=True)
         else:
             click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
@@ -212,7 +218,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     except Exception as e:
         err_msg = f"Failed to initialize redaction/config: {e}. What to try: validate your --config file or retry with --no-redact."
         if json_output:
-            emit_json(error_envelope("record", err_msg))
+            emit_json(error_envelope("record", err_msg), err=True)
         else:
             click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
@@ -240,7 +246,7 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
         if SseTransport is None:
             err_msg = "SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]"
             if json_output:
-                emit_json(error_envelope("record", err_msg))
+                emit_json(error_envelope("record", err_msg), err=True)
             else:
                 click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             sys.exit(1)
@@ -257,18 +263,20 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
     except Exception as e:
         err_msg = f"Failed to open session file: {e}. What to try: check write permissions for '{filepath}'."
         if json_output:
-            emit_json(error_envelope("record", err_msg))
+            emit_json(error_envelope("record", err_msg), err=True)
         else:
             click.secho(f"ERROR: {err_msg}", fg="red", err=True)
         sys.exit(1)
 
     exit_code = 1
+    has_failed = False
     try:
         exit_code = asyncio.run(run_proxy_with_transport(transport_inst, interceptor=interceptor, recorder=recorder))
     except Exception as e:
         logger.debug("Proxy failed with exception", exc_info=True)
+        has_failed = True
         if json_output:
-            emit_json(error_envelope("record", f"Proxy failed: {e}"))
+            emit_json(error_envelope("record", f"Proxy failed: {e}"), err=True)
         else:
             click.secho(f"ERROR: Proxy failed: {e}.", fg="red", err=True)
         sys.exit(1)
@@ -276,11 +284,12 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
         try:
             recorder.close()
         except Exception as e:
-            if json_output:
-                emit_json(error_envelope("record", f"Failed to safely save transcript: {e}"))
-            else:
-                click.secho(f"ERROR: Failed to safely save transcript: {e}.", fg="red", err=True)
-            sys.exit(1)
+            if not has_failed:
+                if json_output:
+                    emit_json(error_envelope("record", f"Failed to safely save transcript: {e}"), err=True)
+                else:
+                    click.secho(f"ERROR: Failed to safely save transcript: {e}.", fg="red", err=True)
+                sys.exit(1)
             
     if json_output:
         msg_count = 0
@@ -290,12 +299,13 @@ def record(output, name, no_redact, config, transport, sse_url, sse_header, outp
             except Exception:
                 msg_count = 0
         emit_json({
-            "status": "ok" if exit_code == 0 else "error",
+            "status": "ok" if exit_code == 0 else "fail",
             "command": "record",
             "session_file": str(filepath),
             "message_count": msg_count
-        })
+        }, err=True)
     sys.exit(exit_code)
+
 
 
 @main.command(context_settings=dict(
@@ -326,10 +336,12 @@ def replay(session, timeout, strict, config, transport, sse_url, sse_header, tim
     if transport == 'sse' or sse_url:
         try:
             sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header, snapshot_path=Path(session))
-        except SystemExit:
+        except SseSettingsError as e:
             if json_output:
-                emit_json(error_envelope("replay", "--sse-url is required when using SSE transport."))
-            raise
+                emit_json(error_envelope("replay", str(e)))
+            else:
+                click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
         
         SseTransport = None
         try:
@@ -1196,7 +1208,11 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
 
     headers = {}
     if transport == 'sse':
-        sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+        try:
+            sse_url, headers = _resolve_sse_settings(config, sse_url, sse_header)
+        except SseSettingsError as e:
+            click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
 
     exit_code = asyncio.run(run_generate(
         args=args,
