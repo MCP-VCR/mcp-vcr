@@ -100,8 +100,21 @@ def validate(path: Path):
         all_ok = True
         for file in yaml_files:
             try:
-                validate_file(file, allow_v0=False)
-                click.secho(f"OK: '{file.name}' is valid.", fg="green")
+                if file.name in ("suite.yaml", "suite.yml"):
+                    from .suite import validate_manifest_dict
+                    with open(file, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                    validate_manifest_dict(data, file_path=file)
+                    click.secho(f"OK: Suite manifest '{file.name}' is valid.", fg="green")
+                elif file.name in ("manifest.yaml", "manifest.yml"):
+                    with open(file, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                    if not isinstance(data, dict) or "suites" not in data or not isinstance(data["suites"], list):
+                        raise ValueError("Top-level manifest must contain a 'suites' list.")
+                    click.secho(f"OK: Top-level manifest '{file.name}' is valid.", fg="green")
+                else:
+                    validate_file(file, allow_v0=False)
+                    click.secho(f"OK: '{file.name}' is valid.", fg="green")
             except ValidationError as e:
                 all_ok = False
                 click.secho(f"ERROR: '{file.name}' validation failed:", fg="red", err=True)
@@ -121,8 +134,21 @@ def validate(path: Path):
     else:
         # Single-file validation
         try:
-            validate_file(path, allow_v0=False)
-            click.secho(f"OK: Transcript '{path}' is valid.", fg="green")
+            if path.name in ("suite.yaml", "suite.yml"):
+                from .suite import validate_manifest_dict
+                with open(path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                validate_manifest_dict(data, file_path=path)
+                click.secho(f"OK: Suite manifest '{path.name}' is valid.", fg="green")
+            elif path.name in ("manifest.yaml", "manifest.yml"):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if not isinstance(data, dict) or "suites" not in data or not isinstance(data["suites"], list):
+                    raise ValueError("Top-level manifest must contain a 'suites' list.")
+                click.secho(f"OK: Top-level manifest '{path.name}' is valid.", fg="green")
+            else:
+                validate_file(path, allow_v0=False)
+                click.secho(f"OK: Transcript '{path}' is valid.", fg="green")
         except ValidationError as e:
             click.secho(f"ERROR: Validation failed for '{path}':", fg="red", err=True)
             for error in e.errors():
@@ -1234,6 +1260,158 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
     ))
     sys.exit(exit_code)
 
+@main.command(name="test", context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.option('--suite', type=str, default=None, help="Name of the test suite to run.")
+@click.option('--suites-dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path), default=None, help="Path to custom directory containing suites.")
+@click.option('--list-suites', is_flag=True, help="List all available test suites and exit.")
+@click.option('--diff-mode', type=click.Choice(['structural', 'semantic', 'strict']), default='structural', help="Diff mode for response verification (default: structural).")
+@click.option('--timeout', type=int, default=10000, help="Timeout in milliseconds per request (default: 10000).")
+@click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
+@click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
+def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_faithful, config, json_output, server_args):
+    """Run predefined test suites against an MCP server.
+    
+    Example:
+      mcp-vcr test --list-suites
+      mcp-vcr test --suite filesystem -- npx @modelcontextprotocol/server-filesystem /tmp
+      mcp-vcr test --suite memory -- npx @modelcontextprotocol/server-memory
+    """
+    from .suite import SuiteRunner
+
+    runner = SuiteRunner(
+        config_path=config,
+        timeout_ms=timeout,
+        timing_faithful=timing_faithful
+    )
+
+    if list_suites:
+        try:
+            suites = runner.list_suites(suites_dir=suites_dir)
+            if json_output:
+                emit_json({
+                    "status": "ok",
+                    "command": "test",
+                    "suites": [
+                        {
+                            "name": s.name,
+                            "description": s.description,
+                            "server_package": s.server_package,
+                            "protocol_version": s.protocol_version,
+                            "transport": s.transport,
+                            "tags": s.tags,
+                            "transcripts": s.transcripts,
+                            "suite_dir": str(s.suite_dir)
+                        }
+                        for s in suites
+                    ]
+                })
+            else:
+                if not suites:
+                    scope_str = f" in '{suites_dir}'" if suites_dir else ""
+                    click.secho(f"No test suites found{scope_str}.", fg="yellow")
+                else:
+                    click.secho("Available community test suites:\n", fg="cyan", bold=True)
+                    for s in suites:
+                        name_styled = click.style(f"  {s.name:<14} ", fg="green", bold=True)
+                        click.echo(f"{name_styled}{s.description}")
+                        if s.server_package:
+                            click.echo(f"                  Package: {s.server_package}")
+                        click.echo()
+            sys.exit(0)
+        except Exception as e:
+            if json_output:
+                emit_json(error_envelope("test", e))
+            else:
+                click.secho(f"ERROR: Failed to list suites: {e}", fg="red", err=True)
+            sys.exit(1)
+
+    if not suite:
+        err_msg = "No suite specified. What to try: use --suite <name> or --list-suites to see available suites."
+        if json_output:
+            emit_json(error_envelope("test", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        sys.exit(1)
+
+    args = list(server_args) if server_args else []
+    if args and args[0] == '--':
+        args = args[1:]
+
+    if not args:
+        err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+        if json_output:
+            emit_json(error_envelope("test", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        sys.exit(1)
+
+    try:
+        manifest = runner.find_suite(suite, suites_dir=suites_dir)
+    except Exception as e:
+        if json_output:
+            emit_json(error_envelope("test", e))
+        else:
+            click.secho(f"ERROR: {e}", fg="red", err=True)
+        sys.exit(1)
+
+    if not json_output:
+        click.secho(f"Suite: {manifest.name} ({len(manifest.transcripts)} transcripts)", fg="cyan", bold=True, err=True)
+
+    try:
+        result = asyncio.run(runner.run_suite(manifest, server_args=args, diff_mode=diff_mode))
+    except Exception as e:
+        if json_output:
+            emit_json(error_envelope("test", e))
+        else:
+            click.secho(f"ERROR: Suite execution failed: {e}", fg="red", err=True)
+        sys.exit(1)
+
+    if json_output:
+        emit_json({
+            "status": "ok" if result.exit_code == 0 else "fail",
+            "command": "test",
+            "suite": manifest.name,
+            "results": [
+                {
+                    "transcript": r["transcript"],
+                    "status": r["status"],
+                    "message": r["message"],
+                    "diff": r["diff"]
+                }
+                for r in result.results
+            ],
+            "summary": {
+                "total": result.total,
+                "passed": result.passed,
+                "failed": result.failed,
+                "skipped": result.skipped
+            }
+        })
+    else:
+        for r in result.results:
+            t_name = r.get("transcript", "")
+            status = r.get("status", "")
+            msg = r.get("message", "")
+            detail = r.get("detail", "")
+            if status == "pass":
+                click.secho(f"  ✓ {t_name} — pass", fg="green")
+            else:
+                click.secho(f"  ⚠ {t_name} — fail ({msg})", fg="red", err=True)
+                if detail:
+                    click.echo(f"    {detail.strip()}", err=True)
+
+        click.echo()
+        res_color = "green" if result.exit_code == 0 else "red"
+        click.secho(f"RESULT: {result.passed}/{result.total} passed, {result.failed}/{result.total} failed", fg=res_color, bold=True)
+
+    sys.exit(result.exit_code)
+
 if __name__ == "__main__":
     main()
+
 

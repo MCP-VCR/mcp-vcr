@@ -117,6 +117,21 @@ mcp-vcr verify --update snapshots/ -- python my_server.py
 ```
 Review the changes using `git diff snapshots/` before committing.
 
+### 6. Run Community Test Suites
+Test your server against curated contract test suites for popular MCP servers (filesystem, memory, time):
+
+```bash
+# List available community test suites
+mcp-vcr test --list-suites
+
+# Run contract tests against your server
+mcp-vcr test --suite filesystem -- npx @modelcontextprotocol/server-filesystem /tmp
+mcp-vcr test --suite memory -- npx @modelcontextprotocol/server-memory
+mcp-vcr test --suite time -- npx @anthropic/mcp-server-time
+```
+
+See [Community Test Collections Guide](docs/community-tests.md) for full details.
+
 ---
 
 ## Claude Desktop Configuration
@@ -193,6 +208,7 @@ Record and diff identical session exchanges across major MCP client runtimes (Cl
 ## Developer Resources
 
 *   [Developer Getting Started Guide](docs/getting-started.md) (onboarding in under 10 minutes)
+*   [Community Test Collections Guide](docs/community-tests.md) (contract test suites for standard MCP servers)
 *   [CI/CD Pipeline Integration Guide](docs/ci-integration.md) (setup for GitHub Actions & GitLab CI/CD)
 *   [Internal Architecture & Design Internals](Architecture.md) (deep-dive on proxy buffers and the normalization pipeline)
 *   [Pytest Integration Guide](docs/pytest-integration.md)
@@ -202,3 +218,4 @@ Record and diff identical session exchanges across major MCP client runtimes (Cl
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+

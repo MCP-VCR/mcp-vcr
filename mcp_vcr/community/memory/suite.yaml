@@ -1,0 +1,9 @@
+name: memory
+description: "MCP Memory Server — contract tests for knowledge graph creation, entities, relations, and memory retrieval."
+server_package: "@modelcontextprotocol/server-memory"
+protocol_version: "2024-11-05"
+transport: stdio
+tags: ["official", "memory", "graph"]
+transcripts:
+  - initialize_and_tools_list.yaml
+  - tool_call_store_and_retrieve.yaml

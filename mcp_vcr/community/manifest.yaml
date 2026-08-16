@@ -1,0 +1,13 @@
+suites:
+  - name: filesystem
+    path: filesystem/
+    description: "Contract tests for @modelcontextprotocol/server-filesystem"
+    server_hint: "npx @modelcontextprotocol/server-filesystem /tmp"
+  - name: memory
+    path: memory/
+    description: "Contract tests for @modelcontextprotocol/server-memory"
+    server_hint: "npx @modelcontextprotocol/server-memory"
+  - name: time
+    path: time/
+    description: "Contract tests for @anthropic/mcp-server-time"
+    server_hint: "npx @anthropic/mcp-server-time"

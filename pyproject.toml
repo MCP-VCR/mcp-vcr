@@ -37,10 +37,15 @@ pythonpath = [
 ]
 
 [tool.setuptools]
-packages = ["mcp_vcr", "mcp_vcr.schemas", "mcp_vcr.transports"]
+packages = ["mcp_vcr", "mcp_vcr.schemas", "mcp_vcr.transports", "mcp_vcr.community"]
 
 [tool.setuptools.package-data]
-mcp_vcr = ["schemas/transcript-schema-v1.json"]
+mcp_vcr = [
+  "schemas/transcript-schema-v1.json",
+  "schemas/suite-manifest-schema.json",
+  "community/**/*.yaml",
+  "community/*.yaml"
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]

@@ -1,0 +1,90 @@
+meta:
+  version: 1
+  recorded_at: "2026-08-16T12:00:00.000Z"
+  session_id: "fa110004"
+  server_command: ["npx", "@modelcontextprotocol/server-memory"]
+  protocol_version: "2024-11-05"
+  client_hint: "mcp-vcr-community"
+  schema_version: "1.0"
+
+messages:
+  - t: 0
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      method: initialize
+      params:
+        protocolVersion: "2024-11-05"
+        capabilities: {}
+        clientInfo:
+          name: "mcp-vcr-community"
+          version: "0.2.1"
+
+  - t: 25
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 1
+      result:
+        protocolVersion: "2024-11-05"
+        capabilities:
+          tools: {}
+        serverInfo:
+          name: "@modelcontextprotocol/server-memory"
+          version: "0.1.0"
+
+  - t: 30
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      method: notifications/initialized
+
+  - t: 40
+    dir: c2s
+    payload:
+      jsonrpc: "2.0"
+      id: 2
+      method: tools/list
+      params: {}
+
+  - t: 65
+    dir: s2c
+    payload:
+      jsonrpc: "2.0"
+      id: 2
+      result:
+        tools:
+          - name: "create_entities"
+            description: "Create multiple new entities in the knowledge graph."
+            inputSchema:
+              type: object
+              properties:
+                entities:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      entityType:
+                        type: string
+                      observations:
+                        type: array
+                        items:
+                          type: string
+                    required: ["name", "entityType", "observations"]
+              required: ["entities"]
+          - name: "read_graph"
+            description: "Read the entire knowledge graph."
+            inputSchema:
+              type: object
+              properties: {}
+          - name: "search_nodes"
+            description: "Search for nodes in the knowledge graph based on a query."
+            inputSchema:
+              type: object
+              properties:
+                query:
+                  type: string
+              required: ["query"]
