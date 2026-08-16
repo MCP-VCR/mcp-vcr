@@ -127,7 +127,7 @@ mcp-vcr test --list-suites
 # Run contract tests against your server
 mcp-vcr test --suite filesystem -- npx @modelcontextprotocol/server-filesystem /tmp
 mcp-vcr test --suite memory -- npx @modelcontextprotocol/server-memory
-mcp-vcr test --suite time -- npx @anthropic/mcp-server-time
+mcp-vcr test --suite time -- uvx --with 'mcp>=1.23,<2' mcp-server-time
 ```
 
 See [Community Test Collections Guide](docs/community-tests.md) for full details.

@@ -70,6 +70,27 @@ def test_load_suite_manifest_invalid_yaml(tmp_path: Path):
         runner.load_suite(suite_dir)
 
 
+def test_load_suite_manifest_path_traversal_rejected(tmp_path: Path):
+    suite_dir = tmp_path / "traversal_suite"
+    suite_dir.mkdir()
+    manifest_file = suite_dir / "suite.yaml"
+    manifest_file.write_text(
+        yaml.dump(
+            {
+                "name": "traversal_suite",
+                "description": "Attempts path traversal",
+                "transcripts": ["../outside.yaml"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = SuiteRunner()
+    with pytest.raises(ValueError):
+        runner.load_suite(suite_dir)
+
+
+
 def test_list_suites():
     runner = SuiteRunner()
     suites = runner.list_suites()
@@ -331,3 +352,8 @@ async def test_suite_runner_with_toy_server(tmp_path: Path):
     assert res.results[1]["transcript"] == "t2_fail.yaml"
     assert res.results[1]["status"] == "fail"
     assert res.results[1]["diff"] is not None
+
+    # Assert no replay artifacts are left behind in the suite directory
+    leftover_replays = list(suite_dir.glob("*-replay-*.yaml")) + list(suite_dir.glob("*-replay-*.yml"))
+    assert leftover_replays == []
+

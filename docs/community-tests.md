@@ -12,7 +12,7 @@ These suites allow server authors and consumers to immediately test their server
 |---|---|---|
 | `filesystem` | `@modelcontextprotocol/server-filesystem` | Contract tests for directory listing, file read/write, and search |
 | `memory` | `@modelcontextprotocol/server-memory` | Contract tests for knowledge graph entities, relations, and retrieval |
-| `time` | `@anthropic/mcp-server-time` | Contract tests for time retrieval and timezone conversion |
+| `time` | `mcp-server-time` | Contract tests for time retrieval and timezone conversion |
 
 ---
 
@@ -44,7 +44,7 @@ mcp-vcr test --suite filesystem -- npx @modelcontextprotocol/server-filesystem /
 mcp-vcr test --suite memory -- npx @modelcontextprotocol/server-memory
 
 # Time server
-mcp-vcr test --suite time -- npx @anthropic/mcp-server-time
+mcp-vcr test --suite time -- uvx --with 'mcp>=1.23,<2' mcp-server-time
 
 # Local custom Python server
 mcp-vcr test --suite filesystem -- python my_filesystem_server.py /tmp
@@ -54,7 +54,7 @@ mcp-vcr test --suite filesystem -- python my_filesystem_server.py /tmp
 
 - `--diff-mode [structural|semantic|strict]`: Set diff verification strictness (default: `structural`).
   - `structural`: Verifies message shapes, field types, and tool presence without failing on dynamic values.
-  - `semantic`: Compares exact values while respecting normalization rules.
+  - `semantic`: Compares exact values while respecting normalization and `ignore_fields` rules.
   - `strict`: Exact byte-identical JSON-RPC payload matching.
 - `--timeout <ms>`: Per-request timeout in milliseconds (default: 10000).
 - `--timing-faithful`: Simulates recorded inter-message delays.
@@ -116,7 +116,7 @@ You can author custom test suites using the same format as bundled community sui
 
 ### Suite Directory Structure
 
-```
+```text
 my_custom_suites/
 └── postgres/
     ├── suite.yaml
@@ -133,6 +133,8 @@ server_package: "mcp-server-postgres"
 protocol_version: "2024-11-05"
 transport: stdio
 tags: ["database", "sql"]
+ignore_fields:
+  - "result.content[0].text"
 transcripts:
   - initialize_and_tools_list.yaml
   - tool_call_query.yaml

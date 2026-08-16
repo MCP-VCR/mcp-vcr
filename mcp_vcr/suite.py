@@ -60,17 +60,19 @@ class SuiteManifest:
     protocol_version: str = "2024-11-05"
     transport: str = "stdio"
     tags: List[str] = field(default_factory=list)
+    ignore_fields: List[str] = field(default_factory=list)
     transcripts: List[str] = field(default_factory=list)
     suite_dir: Path = field(default_factory=Path)
 
 
 @dataclass
 class SuiteResult:
+    """Aggregated outcome of running a suite."""
     suite_name: str
     total: int
     passed: int
     failed: int
-    skipped: int
+    skipped: int  # Reserved for future skip filters (e.g. transport or protocol compatibility gates)
     results: List[Dict[str, Any]]
     exit_code: int
 
@@ -94,19 +96,19 @@ class SuiteRunner:
     def get_bundled_suites_dir() -> Path:
         """Locate the bundled mcp_vcr/community directory."""
         ref = importlib.resources.files("mcp_vcr").joinpath("community")
-        # Ensure we return a concrete Path object
         return Path(str(ref))
 
     def load_suite(self, suite_dir: Path) -> SuiteManifest:
         """
         Parse and validate a suite manifest from a suite directory.
         """
-        if not suite_dir.exists() or not suite_dir.is_dir():
+        resolved_suite_dir = suite_dir.resolve()
+        if not resolved_suite_dir.exists() or not resolved_suite_dir.is_dir():
             raise FileNotFoundError(f"Suite directory not found: {suite_dir}")
 
-        manifest_file = suite_dir / "suite.yaml"
+        manifest_file = resolved_suite_dir / "suite.yaml"
         if not manifest_file.exists():
-            manifest_file = suite_dir / "suite.yml"
+            manifest_file = resolved_suite_dir / "suite.yml"
             if not manifest_file.exists():
                 raise FileNotFoundError(
                     f"No suite.yaml or suite.yml found in {suite_dir}"
@@ -126,12 +128,19 @@ class SuiteRunner:
         protocol_version = data.get("protocol_version", "2024-11-05")
         transport = data.get("transport", "stdio")
         tags = data.get("tags", [])
+        ignore_fields = data.get("ignore_fields", [])
         transcripts = data.get("transcripts", [])
 
-        if not isinstance(transcripts, list) or not transcripts:
-            raise ValueError(
-                f"Suite '{name}' at {suite_dir} must define a non-empty 'transcripts' list."
-            )
+        # Validate path containment for all declared transcripts
+        checked_transcripts: List[str] = []
+        for t in transcripts:
+            t_str = str(t)
+            t_path = (resolved_suite_dir / t_str).resolve()
+            if not t_path.is_relative_to(resolved_suite_dir):
+                raise ValueError(
+                    f"Transcript path '{t_str}' escapes suite directory '{suite_dir}'."
+                )
+            checked_transcripts.append(t_str)
 
         return SuiteManifest(
             name=name,
@@ -140,8 +149,9 @@ class SuiteRunner:
             protocol_version=protocol_version,
             transport=transport,
             tags=tags if isinstance(tags, list) else [],
-            transcripts=[str(t) for t in transcripts],
-            suite_dir=suite_dir,
+            ignore_fields=ignore_fields if isinstance(ignore_fields, list) else [],
+            transcripts=checked_transcripts,
+            suite_dir=resolved_suite_dir,
         )
 
     def list_suites(self, suites_dir: Optional[Path] = None) -> List[SuiteManifest]:
@@ -150,7 +160,7 @@ class SuiteRunner:
         If suites_dir is provided, search exclusively in that directory.
         Otherwise, search exclusively in the bundled community directory.
         """
-        target_dir = Path(suites_dir) if suites_dir else self.get_bundled_suites_dir()
+        target_dir = Path(suites_dir).resolve() if suites_dir else self.get_bundled_suites_dir().resolve()
         if not target_dir.exists() or not target_dir.is_dir():
             return []
 
@@ -169,8 +179,8 @@ class SuiteRunner:
                 if isinstance(suites_list, list):
                     for item in suites_list:
                         if isinstance(item, dict) and "path" in item:
-                            s_dir = target_dir / item["path"]
-                            if s_dir.is_dir():
+                            s_dir = (target_dir / item["path"]).resolve()
+                            if s_dir.is_relative_to(target_dir) and s_dir.is_dir():
                                 try:
                                     sm = self.load_suite(s_dir)
                                     discovered[sm.name] = sm
@@ -207,9 +217,9 @@ class SuiteRunner:
                 return s
 
         # Also check direct folder path match by name
-        target_dir = Path(suites_dir) if suites_dir else self.get_bundled_suites_dir()
-        direct_dir = target_dir / name
-        if direct_dir.is_dir() and (
+        target_dir = Path(suites_dir).resolve() if suites_dir else self.get_bundled_suites_dir().resolve()
+        direct_dir = (target_dir / name).resolve()
+        if direct_dir.is_relative_to(target_dir) and direct_dir.is_dir() and (
             (direct_dir / "suite.yaml").exists() or (direct_dir / "suite.yml").exists()
         ):
             return self.load_suite(direct_dir)
@@ -241,8 +251,23 @@ class SuiteRunner:
         )
 
         for transcript_rel in manifest.transcripts:
-            transcript_path = manifest.suite_dir / transcript_rel
+            transcript_path = (manifest.suite_dir / transcript_rel).resolve()
             t_name = transcript_rel
+
+            # Security containment check
+            if not transcript_path.is_relative_to(manifest.suite_dir.resolve()):
+                res = {
+                    "transcript": t_name,
+                    "status": "fail",
+                    "message": f"Transcript path '{transcript_rel}' escapes suite directory",
+                    "diff": None,
+                    "detail": None,
+                }
+                results.append(res)
+                failed_count += 1
+                if on_transcript_result:
+                    on_transcript_result(res)
+                continue
 
             if not transcript_path.exists():
                 res = {
@@ -275,6 +300,7 @@ class SuiteRunner:
                     on_transcript_result(res)
                 continue
 
+            replay_path: Optional[Path] = None
             try:
                 # 1. Replay transcript against server
                 replay_path = await engine.run_replay(
@@ -304,7 +330,13 @@ class SuiteRunner:
                     continue
 
                 # 3. Diff original transcript against replayed output
-                changes = run_diff(transcript_path, replay_path, mode=diff_mode)
+                ignore_fields_to_pass = manifest.ignore_fields if diff_mode != "strict" else None
+                changes = run_diff(
+                    transcript_path,
+                    replay_path,
+                    mode=diff_mode,
+                    ignore_fields=ignore_fields_to_pass,
+                )
                 has_changes = any(group["changes"] for group in changes.values())
 
                 if has_changes:
@@ -341,6 +373,14 @@ class SuiteRunner:
                 }
                 results.append(res)
                 failed_count += 1
+
+            finally:
+                # Cleanup generated replay artifact
+                if replay_path and isinstance(replay_path, Path) and replay_path.exists():
+                    try:
+                        replay_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
             if on_transcript_result:
                 on_transcript_result(res)

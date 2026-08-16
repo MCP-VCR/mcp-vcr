@@ -41,11 +41,13 @@ packages = ["mcp_vcr", "mcp_vcr.schemas", "mcp_vcr.transports", "mcp_vcr.communi
 
 [tool.setuptools.package-data]
 mcp_vcr = [
-  "schemas/transcript-schema-v1.json",
-  "schemas/suite-manifest-schema.json",
-  "community/**/*.yaml",
-  "community/*.yaml"
+  "schemas/*.json",
 ]
+"mcp_vcr.community" = [
+  "*.yaml",
+  "*/*.yaml",
+]
+
 
 [build-system]
 requires = ["setuptools>=61.0"]

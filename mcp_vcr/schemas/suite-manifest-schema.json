@@ -34,13 +34,21 @@
       },
       "description": "Optional list of tags."
     },
-    "transcripts": {
+    "ignore_fields": {
       "type": "array",
       "items": {
         "type": "string"
       },
+      "description": "Optional list of JSON paths to exclude from comparison (e.g. dynamic timestamps)."
+    },
+    "transcripts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!.*(?:^|[\\/\\\\])\\.\\.(?:[\\/\\\\]|$))(?!^[\\/\\\\]).*$"
+      },
       "minItems": 1,
-      "description": "Ordered list of transcript filenames relative to the suite directory."
+      "description": "Ordered list of transcript filenames relative to the suite directory. Must not escape directory."
     }
   }
 }

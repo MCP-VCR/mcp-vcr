@@ -155,3 +155,25 @@ def test_test_json_output_structure(tmp_path: Path):
         "failed": 0,
         "skipped": 0,
     }
+
+
+def test_test_suites_dir_nonexistent(tmp_path: Path):
+    nonexistent = tmp_path / "nonexistent_suites_dir"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["test", "--suites-dir", str(nonexistent), "--list-suites"],
+    )
+    assert result.exit_code != 0
+    assert "does not exist" in result.output.lower() or "invalid" in result.output.lower()
+
+
+def test_test_timeout_invalid():
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["test", "--suite", "filesystem", "--timeout", "0", "--", "python", "server.py"],
+    )
+    assert result.exit_code != 0
+    assert "at least 1" in result.output.lower() or "invalid" in result.output.lower() or "range" in result.output.lower()
+

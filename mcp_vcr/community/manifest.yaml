@@ -9,5 +9,6 @@ suites:
     server_hint: "npx @modelcontextprotocol/server-memory"
   - name: time
     path: time/
-    description: "Contract tests for @anthropic/mcp-server-time"
-    server_hint: "npx @anthropic/mcp-server-time"
+    description: "Contract tests for mcp-server-time"
+    server_hint: "uvx --with 'mcp>=1.23,<2' mcp-server-time"
+

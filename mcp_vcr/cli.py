@@ -82,6 +82,25 @@ def main():
     """mcp-vcr: A deterministic MCP transcript proxy and testing tool."""
     pass
 
+def _validate_path_target(path: Path) -> str:
+    """Validate a transcript, suite manifest, or registry file and return success description."""
+    if path.name in ("suite.yaml", "suite.yml"):
+        from .suite import validate_manifest_dict
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        validate_manifest_dict(data, file_path=path)
+        return f"Suite manifest '{path.name}' is valid."
+    elif path.name in ("manifest.yaml", "manifest.yml"):
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict) or "suites" not in data or not isinstance(data["suites"], list):
+            raise ValueError("Top-level manifest must contain a 'suites' list.")
+        return f"Top-level manifest '{path.name}' is valid."
+    else:
+        validate_file(path, allow_v0=False)
+        return f"Transcript '{path.name}' is valid."
+
+
 @main.command()
 @click.argument('path', type=click.Path(exists=True, path_type=Path))
 def validate(path: Path):
@@ -100,28 +119,15 @@ def validate(path: Path):
         all_ok = True
         for file in yaml_files:
             try:
-                if file.name in ("suite.yaml", "suite.yml"):
-                    from .suite import validate_manifest_dict
-                    with open(file, "r", encoding="utf-8") as f:
-                        data = yaml.safe_load(f)
-                    validate_manifest_dict(data, file_path=file)
-                    click.secho(f"OK: Suite manifest '{file.name}' is valid.", fg="green")
-                elif file.name in ("manifest.yaml", "manifest.yml"):
-                    with open(file, "r", encoding="utf-8") as f:
-                        data = yaml.safe_load(f)
-                    if not isinstance(data, dict) or "suites" not in data or not isinstance(data["suites"], list):
-                        raise ValueError("Top-level manifest must contain a 'suites' list.")
-                    click.secho(f"OK: Top-level manifest '{file.name}' is valid.", fg="green")
-                else:
-                    validate_file(file, allow_v0=False)
-                    click.secho(f"OK: '{file.name}' is valid.", fg="green")
+                msg = _validate_path_target(file)
+                click.secho(f"OK: {msg}", fg="green")
             except ValidationError as e:
                 all_ok = False
                 click.secho(f"ERROR: '{file.name}' validation failed:", fg="red", err=True)
                 for error in e.errors():
                     loc = " -> ".join(str(part) for part in error['loc'])
-                    msg = error['msg']
-                    click.echo(f"  {loc}: {msg}", err=True)
+                    err_msg = error['msg']
+                    click.echo(f"  {loc}: {err_msg}", err=True)
             except yaml.YAMLError as e:
                 all_ok = False
                 click.secho(f"ERROR: YAML Error in '{file}':", fg="red", err=True)
@@ -134,27 +140,14 @@ def validate(path: Path):
     else:
         # Single-file validation
         try:
-            if path.name in ("suite.yaml", "suite.yml"):
-                from .suite import validate_manifest_dict
-                with open(path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                validate_manifest_dict(data, file_path=path)
-                click.secho(f"OK: Suite manifest '{path.name}' is valid.", fg="green")
-            elif path.name in ("manifest.yaml", "manifest.yml"):
-                with open(path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                if not isinstance(data, dict) or "suites" not in data or not isinstance(data["suites"], list):
-                    raise ValueError("Top-level manifest must contain a 'suites' list.")
-                click.secho(f"OK: Top-level manifest '{path.name}' is valid.", fg="green")
-            else:
-                validate_file(path, allow_v0=False)
-                click.secho(f"OK: Transcript '{path}' is valid.", fg="green")
+            msg = _validate_path_target(path)
+            click.secho(f"OK: {msg}", fg="green")
         except ValidationError as e:
             click.secho(f"ERROR: Validation failed for '{path}':", fg="red", err=True)
             for error in e.errors():
                 loc = " -> ".join(str(part) for part in error['loc'])   
-                msg = error['msg']
-                click.echo(f"  {loc}: {msg}", err=True)
+                err_msg = error['msg']
+                click.echo(f"  {loc}: {err_msg}", err=True)
             sys.exit(1)
         except yaml.YAMLError as e:
             click.secho(f"ERROR: YAML Error in '{path}':", fg="red", err=True)
@@ -164,6 +157,7 @@ def validate(path: Path):
             click.secho(f"ERROR: Unexpected error validating '{path}':", fg="red", err=True)
             click.echo(f"  {e}", err=True)
             sys.exit(1)
+
 
 @main.command(context_settings=dict(
     ignore_unknown_options=True,
@@ -1265,15 +1259,16 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
     allow_extra_args=True,
 ))
 @click.option('--suite', type=str, default=None, help="Name of the test suite to run.")
-@click.option('--suites-dir', type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=Path), default=None, help="Path to custom directory containing suites.")
+@click.option('--suites-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path), default=None, help="Path to custom directory containing suites.")
 @click.option('--list-suites', is_flag=True, help="List all available test suites and exit.")
 @click.option('--diff-mode', type=click.Choice(['structural', 'semantic', 'strict']), default='structural', help="Diff mode for response verification (default: structural).")
-@click.option('--timeout', type=int, default=10000, help="Timeout in milliseconds per request (default: 10000).")
+@click.option('--timeout', type=click.IntRange(min=1), default=10000, help="Timeout in milliseconds per request (default: 10000).")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
 @click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
 def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_faithful, config, json_output, server_args):
+
     """Run predefined test suites against an MCP server.
     
     Example:
