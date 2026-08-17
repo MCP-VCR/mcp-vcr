@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP VCR Suite Manifest",
+  "description": "JSON Schema for validating suite.yaml files in MCP VCR community test collections.",
+  "type": "object",
+  "required": ["name", "description", "transcripts"],
+  "additionalProperties": true,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the test suite."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the suite."
+    },
+    "server_package": {
+      "type": "string",
+      "description": "Informational reference to the server package/repo."
+    },
+    "protocol_version": {
+      "type": "string",
+      "description": "Informational MCP protocol version."
+    },
+    "transport": {
+      "type": "string",
+      "enum": ["stdio", "sse"],
+      "description": "Transport mechanism expected by the suite."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional list of tags."
+    },
+    "ignore_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional list of JSON paths to exclude from comparison (e.g. dynamic timestamps)."
+    },
+    "transcripts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!.*(?:^|[\\/\\\\])\\.\\.(?:[\\/\\\\]|$))(?!^[\\/\\\\]).*$"
+      },
+      "minItems": 1,
+      "description": "Ordered list of transcript filenames relative to the suite directory. Must not escape directory."
+    }
+  }
+}

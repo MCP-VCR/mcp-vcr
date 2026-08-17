@@ -1,0 +1,13 @@
+name: filesystem
+description: "MCP Filesystem Server — contract tests for directory listing, file read/write, and search."
+server_package: "@modelcontextprotocol/server-filesystem"
+protocol_version: "2024-11-05"
+transport: stdio
+tags: ["official", "filesystem", "io"]
+ignore_fields:
+  - "result.content[0].text"
+transcripts:
+  - initialize_and_tools_list.yaml
+  - tool_call_read_file.yaml
+  - tool_call_list_directory.yaml
+

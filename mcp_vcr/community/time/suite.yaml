@@ -1,0 +1,12 @@
+name: time
+description: "MCP Time Server — contract tests for time retrieval and timezone conversion."
+server_package: "mcp-server-time"
+protocol_version: "2024-11-05"
+transport: stdio
+tags: ["official", "time", "utility"]
+ignore_fields:
+  - "result.content[0].text"
+transcripts:
+  - initialize_and_tools_list.yaml
+  - tool_call_get_current_time.yaml
+
