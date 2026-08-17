@@ -1262,7 +1262,7 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
 @click.option('--suites-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path), default=None, help="Path to custom directory containing suites.")
 @click.option('--list-suites', is_flag=True, help="List all available test suites and exit.")
 @click.option('--diff-mode', type=click.Choice(['structural', 'semantic', 'strict']), default='structural', help="Diff mode for response verification (default: structural).")
-@click.option('--timeout', type=click.IntRange(min=1), default=10000, help="Timeout in milliseconds per request (default: 10000).")
+@click.option('--timeout', type=click.IntRange(min=1), default=None, help="Timeout in milliseconds per request (default: 10000).")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
 @click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")

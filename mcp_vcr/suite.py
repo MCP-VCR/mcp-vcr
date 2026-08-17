@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import jsonschema
 import yaml
@@ -39,42 +39,38 @@ def validate_manifest_dict(data: Dict[str, Any], file_path: Optional[Path] = Non
             f"Suite manifest at {file_path or 'unknown'} must be a dictionary."
         )
     schema = load_manifest_schema()
-    validator = jsonschema.Draft7Validator(schema)
-    errors = list(validator.iter_errors(data))
-    if errors:
-        err_msgs = []
-        for err in errors:
-            loc = " -> ".join(str(p) for p in err.path) if err.path else "root"
-            err_msgs.append(f"{loc}: {err.message}")
-        raise ValueError(
-            f"Invalid suite manifest at {file_path or 'unknown'}:\n"
-            + "\n".join(f"  - {m}" for m in err_msgs)
-        )
+    try:
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.ValidationError as e:
+        raise ValueError(f"Invalid suite manifest at {file_path or 'unknown'}: {e.message}") from e
 
 
 @dataclass
 class SuiteManifest:
+    """Represents a validated test suite manifest."""
+
     name: str
     description: str
-    server_package: str = ""
+    server_package: Optional[str] = None
     protocol_version: str = "2024-11-05"
     transport: str = "stdio"
     tags: List[str] = field(default_factory=list)
     ignore_fields: List[str] = field(default_factory=list)
     transcripts: List[str] = field(default_factory=list)
-    suite_dir: Path = field(default_factory=Path)
+    suite_dir: Path = field(default_factory=lambda: Path("."))
 
 
 @dataclass
 class SuiteResult:
-    """Aggregated outcome of running a suite."""
+    """Summary of a suite run execution."""
+
     suite_name: str
     total: int
     passed: int
     failed: int
-    skipped: int  # Reserved for future skip filters (e.g. transport or protocol compatibility gates)
-    results: List[Dict[str, Any]]
+    skipped: int
     exit_code: int
+    results: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class SuiteRunner:
@@ -109,38 +105,39 @@ class SuiteRunner:
         manifest_file = resolved_suite_dir / "suite.yaml"
         if not manifest_file.exists():
             manifest_file = resolved_suite_dir / "suite.yml"
-            if not manifest_file.exists():
-                raise FileNotFoundError(
-                    f"No suite.yaml or suite.yml found in {suite_dir}"
-                )
+
+        if not manifest_file.exists():
+            raise FileNotFoundError(
+                f"No suite.yaml or suite.yml found in {suite_dir}"
+            )
 
         try:
             with open(manifest_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except Exception as e:
-            raise ValueError(f"Failed to parse YAML from {manifest_file}: {e}") from e
+            raise ValueError(f"Failed to parse YAML in {manifest_file}: {e}") from e
 
         validate_manifest_dict(data, file_path=manifest_file)
 
-        name = data.get("name", suite_dir.name)
-        description = data.get("description", "")
-        server_package = data.get("server_package", "")
+        # Additional semantic checks
+        name = data.get("name")
+        description = data.get("description")
+        server_package = data.get("server_package")
         protocol_version = data.get("protocol_version", "2024-11-05")
         transport = data.get("transport", "stdio")
         tags = data.get("tags", [])
         ignore_fields = data.get("ignore_fields", [])
         transcripts = data.get("transcripts", [])
 
-        # Validate path containment for all declared transcripts
+        # Validate transcript paths inside manifest
         checked_transcripts: List[str] = []
         for t in transcripts:
-            t_str = str(t)
-            t_path = (resolved_suite_dir / t_str).resolve()
+            t_path = (resolved_suite_dir / t).resolve()
             if not t_path.is_relative_to(resolved_suite_dir):
                 raise ValueError(
-                    f"Transcript path '{t_str}' escapes suite directory '{suite_dir}'."
+                    f"Transcript path '{t}' attempts directory traversal outside {suite_dir}"
                 )
-            checked_transcripts.append(t_str)
+            checked_transcripts.append(t)
 
         return SuiteManifest(
             name=name,
@@ -165,6 +162,7 @@ class SuiteRunner:
             return []
 
         discovered: Dict[str, SuiteManifest] = {}
+        loaded_dirs: Set[Path] = set()
 
         # 1. Check top-level manifest.yaml if present for explicit suite paths
         top_manifest = target_dir / "manifest.yaml"
@@ -184,6 +182,7 @@ class SuiteRunner:
                                 try:
                                     sm = self.load_suite(s_dir)
                                     discovered[sm.name] = sm
+                                    loaded_dirs.add(s_dir)
                                 except Exception as e:
                                     logger.warning(
                                         f"Failed to load suite from {s_dir}: {e}"
@@ -193,11 +192,13 @@ class SuiteRunner:
 
         # 2. Also scan all subdirectories with suite.yaml or suite.yml
         for child in sorted(target_dir.iterdir()):
-            if child.is_dir() and child.name not in discovered:
-                if (child / "suite.yaml").exists() or (child / "suite.yml").exists():
+            child_dir = child.resolve()
+            if child_dir.is_dir() and child_dir not in loaded_dirs:
+                if (child_dir / "suite.yaml").exists() or (child_dir / "suite.yml").exists():
                     try:
-                        sm = self.load_suite(child)
+                        sm = self.load_suite(child_dir)
                         discovered[sm.name] = sm
+                        loaded_dirs.add(child_dir)
                     except Exception as e:
                         logger.warning(f"Skipping invalid suite in {child}: {e}")
 

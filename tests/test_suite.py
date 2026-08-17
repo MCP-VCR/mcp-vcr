@@ -142,6 +142,73 @@ def test_list_suites_custom_dir_precedence(tmp_path: Path):
     assert suites[0].transcripts == ["custom_t.yaml"]
 
 
+def test_list_suites_directory_matching_suite_name(tmp_path: Path):
+    """Verify that a directory named after another suite's manifest name is not skipped."""
+    suites_dir = tmp_path / "suites"
+    suites_dir.mkdir()
+
+    # Top-level manifest points to 'custom_folder' which defines suite 'alpha'
+    (suites_dir / "manifest.yaml").write_text(
+        yaml.dump({
+            "suites": [
+                {"name": "alpha", "path": "custom_folder"}
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    folder_custom = suites_dir / "custom_folder"
+    folder_custom.mkdir()
+    (folder_custom / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "alpha",
+            "description": "Suite Alpha in custom folder",
+            "transcripts": ["t1.yaml"],
+        }),
+        encoding="utf-8",
+    )
+
+    # Subdirectory named 'alpha' containing suite 'beta'
+    folder_alpha = suites_dir / "alpha"
+    folder_alpha.mkdir()
+    (folder_alpha / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "beta",
+            "description": "Suite Beta in alpha folder",
+            "transcripts": ["t2.yaml"],
+        }),
+        encoding="utf-8",
+    )
+
+    runner = SuiteRunner()
+    suites = runner.list_suites(suites_dir=suites_dir)
+
+    names = [s.name for s in suites]
+    assert "alpha" in names
+    assert "beta" in names
+    assert len(suites) == 2
+
+    # find_suite should locate both
+    assert runner.find_suite("alpha", suites_dir=suites_dir).name == "alpha"
+    assert runner.find_suite("beta", suites_dir=suites_dir).name == "beta"
+
+
+def test_suite_runner_respects_config_timeout(tmp_path: Path):
+    """Verify that SuiteRunner with timeout_ms=None preserves configuration timeout precedence."""
+    config_data = {
+        "replay": {
+            "timeout_ms": 3500,
+        }
+    }
+    config_file = tmp_path / ".mcp-vcr.yaml"
+    config_file.write_text(yaml.dump(config_data), encoding="utf-8")
+
+    runner = SuiteRunner(config_path=config_file, timeout_ms=None)
+    from mcp_vcr.replay import ReplayEngine
+    engine = ReplayEngine(config_path=runner.config_path, timeout_ms=runner.timeout_ms)
+    assert engine.timeout_ms == 3500
+
+
 def test_suite_transcript_validation():
     runner = SuiteRunner()
     suites = runner.list_suites()

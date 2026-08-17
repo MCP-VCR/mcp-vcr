@@ -177,3 +177,37 @@ def test_test_timeout_invalid():
     assert result.exit_code != 0
     assert "at least 1" in result.output.lower() or "invalid" in result.output.lower() or "range" in result.output.lower()
 
+
+def test_test_timeout_omitted_passed_as_none(monkeypatch):
+    captured = {}
+    from mcp_vcr.suite import SuiteRunner
+    orig_init = SuiteRunner.__init__
+
+    def mock_init(self, *args, **kwargs):
+        captured["timeout_ms"] = kwargs.get("timeout_ms")
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(SuiteRunner, "__init__", mock_init)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--list-suites"])
+    assert result.exit_code == 0
+    assert captured["timeout_ms"] is None
+
+
+def test_test_timeout_explicit_passed(monkeypatch):
+    captured = {}
+    from mcp_vcr.suite import SuiteRunner
+    orig_init = SuiteRunner.__init__
+
+    def mock_init(self, *args, **kwargs):
+        captured["timeout_ms"] = kwargs.get("timeout_ms")
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(SuiteRunner, "__init__", mock_init)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--timeout", "12345", "--list-suites"])
+    assert result.exit_code == 0
+    assert captured["timeout_ms"] == 12345
+
