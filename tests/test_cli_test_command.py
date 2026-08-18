@@ -54,73 +54,9 @@ def test_test_no_suite_specified():
     assert "No suite specified" in (result.output or "")
 
 
-def test_test_json_output_structure(tmp_path: Path):
+def test_test_json_output_structure(tmp_path: Path, toy_pass_transcript, write_suite):
     # Run test command with --json on toy_server using custom toy suite
-    import yaml
-
-    suite_dir = tmp_path / "toy_suite"
-    suite_dir.mkdir()
-
-    t_pass = {
-        "meta": {
-            "version": 1,
-            "recorded_at": "2026-08-16T12:00:00.000Z",
-            "session_id": "ee55ff66",
-            "server_command": ["python", "tests/integration/toy_server.py"],
-            "protocol_version": "2024-11-05",
-            "client_hint": "pytest",
-            "schema_version": "1.0",
-        },
-        "messages": [
-            {
-                "t": 0,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "test", "version": "1.0"},
-                    },
-                },
-            },
-            {
-                "t": 25,
-                "dir": "s2c",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
-                        "serverInfo": {"name": "toy-server", "version": "1.0.0"},
-                    },
-                },
-            },
-            {
-                "t": 30,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized",
-                },
-            },
-        ],
-    }
-
-    (suite_dir / "init_only.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite_dir / "suite.yaml").write_text(
-        yaml.dump(
-            {
-                "name": "toy_suite",
-                "description": "Toy pass suite",
-                "transcripts": ["init_only.yaml"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    write_suite(tmp_path / "toy_suite", "toy_suite", toy_pass_transcript, "init_only.yaml", "Toy pass suite")
 
     toy_server_py = str(Path(__file__).parent / "integration" / "toy_server.py")
 
@@ -250,81 +186,9 @@ def test_test_no_server_args_shows_hint_suggestion():
     assert "--use-hint" in result.output
 
 
-def test_test_all_json_envelope_and_execution(tmp_path: Path):
-    import yaml
-    suite1_dir = tmp_path / "suite1"
-    suite1_dir.mkdir()
-    suite2_dir = tmp_path / "suite2"
-    suite2_dir.mkdir()
-
-    t_pass = {
-        "meta": {
-            "version": 1,
-            "recorded_at": "2026-08-16T12:00:00.000Z",
-            "session_id": "11112222",
-            "server_command": ["python", "tests/integration/toy_server.py"],
-            "protocol_version": "2024-11-05",
-            "client_hint": "pytest",
-            "schema_version": "1.0",
-        },
-        "messages": [
-            {
-                "t": 0,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "test", "version": "1.0"},
-                    },
-                },
-            },
-            {
-                "t": 25,
-                "dir": "s2c",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
-                        "serverInfo": {"name": "toy-server", "version": "1.0.0"},
-                    },
-                },
-            },
-            {
-                "t": 30,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized",
-                },
-            },
-        ],
-    }
-
-    (suite1_dir / "t1.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite1_dir / "suite.yaml").write_text(
-        yaml.dump({
-            "name": "suite1",
-            "description": "Suite 1 pass",
-            "transcripts": ["t1.yaml"]
-        }),
-        encoding="utf-8"
-    )
-
-    (suite2_dir / "t2.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite2_dir / "suite.yaml").write_text(
-        yaml.dump({
-            "name": "suite2",
-            "description": "Suite 2 pass",
-            "transcripts": ["t2.yaml"]
-        }),
-        encoding="utf-8"
-    )
+def test_test_all_json_envelope_and_execution(tmp_path: Path, toy_pass_transcript, write_suite):
+    write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml", "Suite 1 pass")
+    write_suite(tmp_path / "suite2", "suite2", toy_pass_transcript, "t2.yaml", "Suite 2 pass")
 
     toy_server_py = str(Path(__file__).parent / "integration" / "toy_server.py")
 
@@ -365,69 +229,8 @@ def test_test_all_json_envelope_and_execution(tmp_path: Path):
     }
 
 
-def test_test_all_text_output(tmp_path: Path):
-    import yaml
-    suite1_dir = tmp_path / "suite1"
-    suite1_dir.mkdir()
-
-    t_pass = {
-        "meta": {
-            "version": 1,
-            "recorded_at": "2026-08-16T12:00:00.000Z",
-            "session_id": "11112222",
-            "server_command": ["python", "tests/integration/toy_server.py"],
-            "protocol_version": "2024-11-05",
-            "client_hint": "pytest",
-            "schema_version": "1.0",
-        },
-        "messages": [
-            {
-                "t": 0,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "test", "version": "1.0"},
-                    },
-                },
-            },
-            {
-                "t": 25,
-                "dir": "s2c",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
-                        "serverInfo": {"name": "toy-server", "version": "1.0.0"},
-                    },
-                },
-            },
-            {
-                "t": 30,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized",
-                },
-            },
-        ],
-    }
-
-    (suite1_dir / "t1.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite1_dir / "suite.yaml").write_text(
-        yaml.dump({
-            "name": "suite1",
-            "description": "Suite 1 pass",
-            "transcripts": ["t1.yaml"]
-        }),
-        encoding="utf-8"
-    )
+def test_test_all_text_output(tmp_path: Path, toy_pass_transcript, write_suite):
+    write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml", "Suite 1 pass")
 
     toy_server_py = str(Path(__file__).parent / "integration" / "toy_server.py")
 
@@ -467,5 +270,77 @@ def test_test_use_hint_shell_injection_rejected(monkeypatch):
     result = runner.invoke(main, ["test", "--suite", "evil", "--use-hint"])
     assert result.exit_code == 1
     assert "unsupported shell characters" in result.output
+
+
+def test_test_use_hint_outside_bundled_rejected(monkeypatch, tmp_path: Path):
+    from mcp_vcr.suite import SuiteManifest, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="external_suite",
+        description="External suite",
+        server_hint="python server.py",
+        transcripts=["t.yaml"],
+        suite_dir=tmp_path / "external_suite"
+    )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "external_suite", "--use-hint"])
+    assert result.exit_code == 1
+    assert "can only be used with bundled suites" in result.output
+
+
+def test_test_use_hint_no_hint_defined_rejected(monkeypatch):
+    from mcp_vcr.suite import SuiteManifest, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="no_hint_suite",
+        description="Bundled suite without hint",
+        server_hint=None,
+        transcripts=["t.yaml"],
+        suite_dir=SuiteRunner.get_bundled_suites_dir() / "filesystem"
+    )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "no_hint_suite", "--use-hint"])
+    assert result.exit_code == 1
+    assert "No server hint defined" in result.output
+
+
+def test_test_use_hint_clean_hint_success(monkeypatch):
+    from mcp_vcr.suite import SuiteManifest, SuiteResult, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="valid_hint_suite",
+        description="Bundled suite with clean hint",
+        server_hint="python -m my_server --port 8080",
+        transcripts=["t.yaml"],
+        suite_dir=SuiteRunner.get_bundled_suites_dir() / "filesystem"
+    )
+
+    captured = {}
+
+    async def mock_run_suite(self, m, server_args, **kwargs):
+        captured["server_args"] = server_args
+        return SuiteResult(
+            suite_name=m.name,
+            total=1,
+            passed=1,
+            failed=0,
+            skipped=0,
+            exit_code=0,
+            results=[{"transcript": "t.yaml", "status": "pass", "message": "OK", "diff": None}],
+        )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+    monkeypatch.setattr(SuiteRunner, "run_suite", mock_run_suite)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "valid_hint_suite", "--use-hint"])
+    assert result.exit_code == 0
+    assert captured["server_args"] == ["python", "-m", "my_server", "--port", "8080"]
 
 

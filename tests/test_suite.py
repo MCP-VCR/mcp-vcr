@@ -459,18 +459,41 @@ def test_is_bundled_suite(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_run_all_suites_with_toy_server(tmp_path: Path):
-    # Create two test suites
-    suite1_dir = tmp_path / "suite1"
-    suite1_dir.mkdir()
-    suite2_dir = tmp_path / "suite2"
-    suite2_dir.mkdir()
+async def test_run_all_suites_with_toy_server(tmp_path: Path, toy_pass_transcript, write_suite):
+    # Create two test suites using shared fixtures
+    suite1_dir = write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml", "Suite 1 pass")
+    suite2_dir = write_suite(tmp_path / "suite2", "suite2", toy_pass_transcript, "t2.yaml", "Suite 2 pass")
 
-    t_pass = {
+    runner = SuiteRunner()
+    m1 = runner.load_suite(suite1_dir)
+    m2 = runner.load_suite(suite2_dir)
+
+    server_cmd = [sys.executable, str(Path(__file__).parent / "integration" / "toy_server.py")]
+    multi_res = await runner.run_all_suites([m1, m2], server_args=server_cmd)
+
+    assert multi_res.suites_total == 2
+    assert multi_res.suites_passed == 2
+    assert multi_res.suites_failed == 0
+    assert multi_res.transcripts_total == 2
+    assert multi_res.transcripts_passed == 2
+    assert multi_res.transcripts_failed == 0
+    assert multi_res.exit_code == 0
+    assert len(multi_res.suite_results) == 2
+    assert multi_res.suite_results[0].suite_name == "suite1"
+    assert multi_res.suite_results[1].suite_name == "suite2"
+
+
+@pytest.mark.asyncio
+async def test_run_all_suites_mixed_pass_fail(tmp_path: Path, toy_pass_transcript, write_suite):
+    # Suite 1: passes
+    suite1_dir = write_suite(tmp_path / "suite1", "suite1_pass", toy_pass_transcript, "t1.yaml")
+
+    # Suite 2: failing tool call response schema
+    t2_fail = {
         "meta": {
             "version": 1,
             "recorded_at": "2026-08-16T12:00:00.000Z",
-            "session_id": "11112222",
+            "session_id": "cc33dd44",
             "server_command": ["python", "tests/integration/toy_server.py"],
             "protocol_version": "2024-11-05",
             "client_hint": "pytest",
@@ -512,28 +535,33 @@ async def test_run_all_suites_with_toy_server(tmp_path: Path):
                     "method": "notifications/initialized",
                 },
             },
+            {
+                "t": 40,
+                "dir": "c2s",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "toy_tool",
+                        "arguments": {"arg": "hello"},
+                    },
+                },
+            },
+            {
+                "t": 65,
+                "dir": "s2c",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "numeric_output": 12345
+                    },
+                },
+            },
         ],
     }
-
-    (suite1_dir / "t1.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite1_dir / "suite.yaml").write_text(
-        yaml.dump({
-            "name": "suite1",
-            "description": "Suite 1 pass",
-            "transcripts": ["t1.yaml"]
-        }),
-        encoding="utf-8"
-    )
-
-    (suite2_dir / "t2.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite2_dir / "suite.yaml").write_text(
-        yaml.dump({
-            "name": "suite2",
-            "description": "Suite 2 pass",
-            "transcripts": ["t2.yaml"]
-        }),
-        encoding="utf-8"
-    )
+    suite2_dir = write_suite(tmp_path / "suite2", "suite2_fail", t2_fail, "t2.yaml")
 
     runner = SuiteRunner()
     m1 = runner.load_suite(suite1_dir)
@@ -543,12 +571,47 @@ async def test_run_all_suites_with_toy_server(tmp_path: Path):
     multi_res = await runner.run_all_suites([m1, m2], server_args=server_cmd)
 
     assert multi_res.suites_total == 2
-    assert multi_res.suites_passed == 2
-    assert multi_res.suites_failed == 0
-    assert multi_res.transcripts_total == 2
-    assert multi_res.transcripts_passed == 2
-    assert multi_res.transcripts_failed == 0
-    assert multi_res.exit_code == 0
+    assert multi_res.suites_passed == 1
+    assert multi_res.suites_failed == 1
+    assert multi_res.exit_code == 1
     assert len(multi_res.suite_results) == 2
+    # Preserves sequential execution order
+    assert multi_res.suite_results[0].suite_name == "suite1_pass"
+    assert multi_res.suite_results[0].exit_code == 0
+    assert multi_res.suite_results[1].suite_name == "suite2_fail"
+    assert multi_res.suite_results[1].exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_run_all_suites_exception_isolation(tmp_path: Path, toy_pass_transcript, write_suite, monkeypatch):
+    suite1_dir = write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml")
+    suite2_dir = write_suite(tmp_path / "suite2", "suite2", toy_pass_transcript, "t2.yaml")
+
+    runner = SuiteRunner()
+    m1 = runner.load_suite(suite1_dir)
+    m2 = runner.load_suite(suite2_dir)
+
+    orig_run_suite = runner.run_suite
+
+    async def mock_run_suite(manifest, *args, **kwargs):
+        if manifest.name == "suite1":
+            raise RuntimeError("Catastrophic connection failure")
+        return await orig_run_suite(manifest, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "run_suite", mock_run_suite)
+
+    server_cmd = [sys.executable, str(Path(__file__).parent / "integration" / "toy_server.py")]
+    multi_res = await runner.run_all_suites([m1, m2], server_args=server_cmd)
+
+    assert multi_res.suites_total == 2
+    assert multi_res.suites_passed == 1
+    assert multi_res.suites_failed == 1
+    assert multi_res.exit_code == 1
+    assert multi_res.suite_results[0].suite_name == "suite1"
+    assert multi_res.suite_results[0].exit_code == 1
+    assert multi_res.suite_results[0].results[0]["status"] == "fail"
+    assert "Catastrophic connection failure" in multi_res.suite_results[0].results[0]["message"]
+    assert multi_res.suite_results[1].suite_name == "suite2"
+    assert multi_res.suite_results[1].exit_code == 0
 
 

@@ -115,7 +115,8 @@ class SuiteRunner:
         try:
             bundled_dir = self.get_bundled_suites_dir().resolve()
             return manifest.suite_dir.resolve().is_relative_to(bundled_dir)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to check if suite '{manifest.name}' is bundled: {e}", exc_info=True)
             return False
 
     def load_suite(self, suite_dir: Path) -> SuiteManifest:
@@ -450,14 +451,33 @@ class SuiteRunner:
 
             callback = None
             if on_transcript_result:
-                callback = lambda r, m=manifest: on_transcript_result(m, r)
+                def callback(r: Dict[str, Any], m: SuiteManifest = manifest) -> None:
+                    on_transcript_result(m, r)
 
-            res = await self.run_suite(
-                manifest,
-                server_args=server_args,
-                diff_mode=diff_mode,
-                on_transcript_result=callback,
-            )
+            try:
+                res = await self.run_suite(
+                    manifest,
+                    server_args=server_args,
+                    diff_mode=diff_mode,
+                    on_transcript_result=callback,
+                )
+            except Exception as e:
+                logger.warning(f"Suite '{manifest.name}' aborted: {e}")
+                res = SuiteResult(
+                    suite_name=manifest.name,
+                    total=len(manifest.transcripts),
+                    passed=0,
+                    failed=len(manifest.transcripts),
+                    skipped=0,
+                    exit_code=1,
+                    results=[{
+                        "transcript": None,
+                        "status": "fail",
+                        "message": f"Suite execution error: {e}",
+                        "diff": None,
+                        "detail": str(e),
+                    }],
+                )
             suite_results.append(res)
             if res.exit_code == 0:
                 suites_passed += 1

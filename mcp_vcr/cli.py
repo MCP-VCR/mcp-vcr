@@ -1254,12 +1254,21 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
     ))
     sys.exit(exit_code)
 
+def _error_and_exit(command: str, err: Any, json_output: bool, exit_code: int = 1) -> None:
+    """Emit an error envelope or formatted error message and terminate the process."""
+    if json_output:
+        emit_json(error_envelope(command, err))
+    else:
+        click.secho(f"ERROR: {err}", fg="red", err=True)
+    sys.exit(exit_code)
+
+
 @main.command(name="test", context_settings=dict(
     ignore_unknown_options=True,
     allow_extra_args=True,
 ))
 @click.option('--suite', type=str, default=None, help="Name of the test suite to run.")
-@click.option('--all', 'all_suites', is_flag=True, help="Run all available test suites.")
+@click.option('--all', 'all_suites', is_flag=True, help="Run all available test suites sequentially against the same server.")
 @click.option('--suites-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path), default=None, help="Path to custom directory containing suites.")
 @click.option('--list-suites', is_flag=True, help="List all available test suites and exit.")
 @click.option('--use-hint', is_flag=True, help="Use the server launch command from the bundled test suite manifest.")
@@ -1287,28 +1296,18 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
     )
 
     if suite and all_suites:
-        err_msg = "--suite and --all are mutually exclusive."
-        if json_output:
-            emit_json(error_envelope("test", err_msg))
-        else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(2)
+        _error_and_exit("test", "--suite and --all are mutually exclusive.", json_output, exit_code=2)
 
     if use_hint and all_suites:
-        err_msg = "--use-hint cannot be used with --all."
-        if json_output:
-            emit_json(error_envelope("test", err_msg))
-        else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(2)
+        _error_and_exit("test", "--use-hint cannot be used with --all.", json_output, exit_code=2)
 
     if use_hint and suites_dir:
-        err_msg = "--use-hint cannot be used with --suites-dir. Server hints from external suite directories are informational only and will not be executed."
-        if json_output:
-            emit_json(error_envelope("test", err_msg))
-        else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(2)
+        _error_and_exit(
+            "test",
+            "--use-hint cannot be used with --suites-dir. Server hints from external suite directories are informational only and will not be executed.",
+            json_output,
+            exit_code=2,
+        )
 
     if list_suites:
         try:
@@ -1348,19 +1347,14 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
                         click.echo()
             sys.exit(0)
         except Exception as e:
-            if json_output:
-                emit_json(error_envelope("test", e))
-            else:
-                click.secho(f"ERROR: Failed to list suites: {e}", fg="red", err=True)
-            sys.exit(1)
+            _error_and_exit("test", f"Failed to list suites: {e}", json_output)
 
     if not suite and not all_suites:
-        err_msg = "No suite specified. What to try: use --suite <name>, --all, or --list-suites to see available suites."
-        if json_output:
-            emit_json(error_envelope("test", err_msg))
-        else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(1)
+        _error_and_exit(
+            "test",
+            "No suite specified. What to try: use --suite <name>, --all, or --list-suites to see available suites.",
+            json_output,
+        )
 
     args = list(server_args) if server_args else []
     if args and args[0] == '--':
@@ -1368,21 +1362,16 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
 
     if all_suites:
         if not args:
-            err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
-            if json_output:
-                emit_json(error_envelope("test", err_msg))
-            else:
-                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-            sys.exit(1)
+            _error_and_exit(
+                "test",
+                "No server command specified. What to try: pass the server command and arguments after a '--' separator.",
+                json_output,
+            )
 
         try:
             manifests = runner.list_suites(suites_dir=suites_dir)
         except Exception as e:
-            if json_output:
-                emit_json(error_envelope("test", e))
-            else:
-                click.secho(f"ERROR: Failed to discover suites: {e}", fg="red", err=True)
-            sys.exit(1)
+            _error_and_exit("test", f"Failed to discover suites: {e}", json_output)
 
         if not manifests:
             scope_str = f" in '{suites_dir}'" if suites_dir else ""
@@ -1433,11 +1422,7 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
                 on_transcript_result=on_transcript_result
             ))
         except Exception as e:
-            if json_output:
-                emit_json(error_envelope("test", e))
-            else:
-                click.secho(f"ERROR: Multi-suite execution failed: {e}", fg="red", err=True)
-            sys.exit(1)
+            _error_and_exit("test", f"Multi-suite execution failed: {e}", json_output)
 
         if json_output:
             emit_json({
@@ -1492,57 +1477,40 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
     try:
         manifest = runner.find_suite(suite, suites_dir=suites_dir)
     except Exception as e:
-        if json_output:
-            emit_json(error_envelope("test", e))
-        else:
-            click.secho(f"ERROR: {e}", fg="red", err=True)
-        sys.exit(1)
+        _error_and_exit("test", e, json_output)
 
     if not args:
         if use_hint:
             if not runner.is_bundled_suite(manifest):
-                err_msg = f"--use-hint can only be used with bundled suites. Suite '{manifest.name}' is from an external directory."
-                if json_output:
-                    emit_json(error_envelope("test", err_msg))
-                else:
-                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-                sys.exit(1)
+                _error_and_exit(
+                    "test",
+                    f"--use-hint can only be used with bundled suites. Suite '{manifest.name}' is from an external directory.",
+                    json_output,
+                )
 
             if not manifest.server_hint:
-                err_msg = f"No server hint defined for suite '{manifest.name}'."
-                if json_output:
-                    emit_json(error_envelope("test", err_msg))
-                else:
-                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-                sys.exit(1)
+                _error_and_exit("test", f"No server hint defined for suite '{manifest.name}'.", json_output)
 
             dangerous_chars = [";", "&", "|", "<", ">", "$", "`", "\n", "\r"]
             if any(ch in manifest.server_hint for ch in dangerous_chars):
-                err_msg = f"Server hint contains unsupported shell characters: {manifest.server_hint}"
-                if json_output:
-                    emit_json(error_envelope("test", err_msg))
-                else:
-                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-                sys.exit(1)
+                _error_and_exit(
+                    "test",
+                    f"Server hint contains unsupported shell characters: {manifest.server_hint}",
+                    json_output,
+                )
 
             import shlex
             try:
                 args = shlex.split(manifest.server_hint)
             except Exception as e:
-                err_msg = f"Failed to parse server hint '{manifest.server_hint}': {e}"
-                if json_output:
-                    emit_json(error_envelope("test", err_msg))
-                else:
-                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-                sys.exit(1)
+                _error_and_exit(
+                    "test",
+                    f"Failed to parse server hint '{manifest.server_hint}': {e}",
+                    json_output,
+                )
 
             if not args:
-                err_msg = f"Server hint for suite '{manifest.name}' is empty."
-                if json_output:
-                    emit_json(error_envelope("test", err_msg))
-                else:
-                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-                sys.exit(1)
+                _error_and_exit("test", f"Server hint for suite '{manifest.name}' is empty.", json_output)
         else:
             if manifest.server_hint:
                 err_msg = (
@@ -1553,11 +1521,7 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
                 )
             else:
                 err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
-            if json_output:
-                emit_json(error_envelope("test", err_msg))
-            else:
-                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-            sys.exit(1)
+            _error_and_exit("test", err_msg, json_output)
 
     if not json_output:
         click.secho(f"Suite: {manifest.name} ({len(manifest.transcripts)} transcripts)", fg="cyan", bold=True, err=True)
@@ -1565,11 +1529,7 @@ def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode
     try:
         result = asyncio.run(runner.run_suite(manifest, server_args=args, diff_mode=diff_mode))
     except Exception as e:
-        if json_output:
-            emit_json(error_envelope("test", e))
-        else:
-            click.secho(f"ERROR: Suite execution failed: {e}", fg="red", err=True)
-        sys.exit(1)
+        _error_and_exit("test", f"Suite execution failed: {e}", json_output)
 
     if json_output:
         emit_json({
