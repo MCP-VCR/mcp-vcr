@@ -54,73 +54,9 @@ def test_test_no_suite_specified():
     assert "No suite specified" in (result.output or "")
 
 
-def test_test_json_output_structure(tmp_path: Path):
+def test_test_json_output_structure(tmp_path: Path, toy_pass_transcript, write_suite):
     # Run test command with --json on toy_server using custom toy suite
-    import yaml
-
-    suite_dir = tmp_path / "toy_suite"
-    suite_dir.mkdir()
-
-    t_pass = {
-        "meta": {
-            "version": 1,
-            "recorded_at": "2026-08-16T12:00:00.000Z",
-            "session_id": "ee55ff66",
-            "server_command": ["python", "tests/integration/toy_server.py"],
-            "protocol_version": "2024-11-05",
-            "client_hint": "pytest",
-            "schema_version": "1.0",
-        },
-        "messages": [
-            {
-                "t": 0,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "test", "version": "1.0"},
-                    },
-                },
-            },
-            {
-                "t": 25,
-                "dir": "s2c",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
-                        "serverInfo": {"name": "toy-server", "version": "1.0.0"},
-                    },
-                },
-            },
-            {
-                "t": 30,
-                "dir": "c2s",
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized",
-                },
-            },
-        ],
-    }
-
-    (suite_dir / "init_only.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
-    (suite_dir / "suite.yaml").write_text(
-        yaml.dump(
-            {
-                "name": "toy_suite",
-                "description": "Toy pass suite",
-                "transcripts": ["init_only.yaml"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    write_suite(tmp_path / "toy_suite", "toy_suite", toy_pass_transcript, "init_only.yaml", "Toy pass suite")
 
     toy_server_py = str(Path(__file__).parent / "integration" / "toy_server.py")
 
@@ -210,4 +146,201 @@ def test_test_timeout_explicit_passed(monkeypatch):
     result = runner.invoke(main, ["test", "--timeout", "12345", "--list-suites"])
     assert result.exit_code == 0
     assert captured["timeout_ms"] == 12345
+
+
+def test_test_all_and_suite_mutually_exclusive():
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "filesystem", "--all", "--", "python", "server.py"])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+
+
+def test_test_use_hint_and_all_rejected():
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--all", "--use-hint"])
+    assert result.exit_code == 2
+    assert "--use-hint cannot be used with --all" in result.output
+
+
+def test_test_use_hint_with_suites_dir_rejected(tmp_path: Path):
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "custom", "--suites-dir", str(tmp_path), "--use-hint"])
+    assert result.exit_code == 2
+    assert "--use-hint cannot be used with --suites-dir" in result.output
+    assert "informational only" in result.output
+
+
+def test_test_all_no_server_args():
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--all"])
+    assert result.exit_code == 1
+    assert "No server command specified" in result.output
+
+
+def test_test_no_server_args_shows_hint_suggestion():
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "filesystem"])
+    assert result.exit_code == 1
+    assert "Hint from suite manifest" in result.output
+    assert "@modelcontextprotocol/server-filesystem" in result.output
+    assert "--use-hint" in result.output
+
+
+def test_test_all_json_envelope_and_execution(tmp_path: Path, toy_pass_transcript, write_suite):
+    write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml", "Suite 1 pass")
+    write_suite(tmp_path / "suite2", "suite2", toy_pass_transcript, "t2.yaml", "Suite 2 pass")
+
+    toy_server_py = str(Path(__file__).parent / "integration" / "toy_server.py")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "test",
+            "--all",
+            "--suites-dir",
+            str(tmp_path),
+            "--json",
+            "--",
+            sys.executable,
+            toy_server_py,
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["status"] == "ok"
+    assert data["command"] == "test"
+    assert data["mode"] == "all"
+    assert "suite_results" in data
+    assert len(data["suite_results"]) == 2
+    suite_names = [sr["suite"] for sr in data["suite_results"]]
+    assert "suite1" in suite_names
+    assert "suite2" in suite_names
+
+    assert data["summary"] == {
+        "suites_total": 2,
+        "suites_passed": 2,
+        "suites_failed": 0,
+        "transcripts_total": 2,
+        "transcripts_passed": 2,
+        "transcripts_failed": 0,
+        "transcripts_skipped": 0,
+    }
+
+
+def test_test_all_text_output(tmp_path: Path, toy_pass_transcript, write_suite):
+    write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml", "Suite 1 pass")
+
+    toy_server_py = str(Path(__file__).parent / "integration" / "toy_server.py")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "test",
+            "--all",
+            "--suites-dir",
+            str(tmp_path),
+            "--",
+            sys.executable,
+            toy_server_py,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "━━ suite1" in result.output
+    assert "RESULT: 1/1 suites passed | 1/1 transcripts passed, 0/1 failed" in result.output
+
+
+def test_test_use_hint_shell_injection_rejected(monkeypatch):
+    from mcp_vcr.suite import SuiteManifest, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="evil",
+        description="Evil suite",
+        server_hint="cat /etc/passwd | sh; rm -rf /",
+        transcripts=["t.yaml"],
+        suite_dir=SuiteRunner.get_bundled_suites_dir() / "filesystem"
+    )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "evil", "--use-hint"])
+    assert result.exit_code == 1
+    assert "unsupported shell characters" in result.output
+
+
+def test_test_use_hint_outside_bundled_rejected(monkeypatch, tmp_path: Path):
+    from mcp_vcr.suite import SuiteManifest, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="external_suite",
+        description="External suite",
+        server_hint="python server.py",
+        transcripts=["t.yaml"],
+        suite_dir=tmp_path / "external_suite"
+    )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "external_suite", "--use-hint"])
+    assert result.exit_code == 1
+    assert "can only be used with bundled suites" in result.output
+
+
+def test_test_use_hint_no_hint_defined_rejected(monkeypatch):
+    from mcp_vcr.suite import SuiteManifest, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="no_hint_suite",
+        description="Bundled suite without hint",
+        server_hint=None,
+        transcripts=["t.yaml"],
+        suite_dir=SuiteRunner.get_bundled_suites_dir() / "filesystem"
+    )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "no_hint_suite", "--use-hint"])
+    assert result.exit_code == 1
+    assert "No server hint defined" in result.output
+
+
+def test_test_use_hint_clean_hint_success(monkeypatch):
+    from mcp_vcr.suite import SuiteManifest, SuiteResult, SuiteRunner
+
+    manifest = SuiteManifest(
+        name="valid_hint_suite",
+        description="Bundled suite with clean hint",
+        server_hint="python -m my_server --port 8080",
+        transcripts=["t.yaml"],
+        suite_dir=SuiteRunner.get_bundled_suites_dir() / "filesystem"
+    )
+
+    captured = {}
+
+    async def mock_run_suite(self, m, server_args, **kwargs):
+        captured["server_args"] = server_args
+        return SuiteResult(
+            suite_name=m.name,
+            total=1,
+            passed=1,
+            failed=0,
+            skipped=0,
+            exit_code=0,
+            results=[{"transcript": "t.yaml", "status": "pass", "message": "OK", "diff": None}],
+        )
+
+    monkeypatch.setattr(SuiteRunner, "find_suite", lambda *args, **kwargs: manifest)
+    monkeypatch.setattr(SuiteRunner, "run_suite", mock_run_suite)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["test", "--suite", "valid_hint_suite", "--use-hint"])
+    assert result.exit_code == 0
+    assert captured["server_args"] == ["python", "-m", "my_server", "--port", "8080"]
+
 
