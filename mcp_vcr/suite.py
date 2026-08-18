@@ -450,15 +450,15 @@ class SuiteRunner:
         transcripts_skipped = 0
 
         for manifest in manifests:
-            if on_suite_start:
-                on_suite_start(manifest)
-
-            callback = None
-            if on_transcript_result:
-                def callback(r: Dict[str, Any], m: SuiteManifest = manifest) -> None:
-                    on_transcript_result(m, r)
-
             try:
+                if on_suite_start:
+                    on_suite_start(manifest)
+
+                callback = None
+                if on_transcript_result:
+                    def callback(r: Dict[str, Any], m: SuiteManifest = manifest) -> None:
+                        on_transcript_result(m, r)
+
                 res = await self.run_suite(
                     manifest,
                     server_args=server_args,

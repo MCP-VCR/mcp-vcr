@@ -681,3 +681,36 @@ async def test_run_all_suites_exception_isolation(tmp_path: Path, toy_pass_trans
     assert multi_res.suite_results[1].exit_code == 0
 
 
+@pytest.mark.asyncio
+async def test_run_all_suites_on_suite_start_exception_isolation(tmp_path: Path, toy_pass_transcript, write_suite):
+    suite1_dir = write_suite(tmp_path / "suite1", "suite1", toy_pass_transcript, "t1.yaml")
+    suite2_dir = write_suite(tmp_path / "suite2", "suite2", toy_pass_transcript, "t2.yaml")
+
+    runner = SuiteRunner()
+    m1 = runner.load_suite(suite1_dir)
+    m2 = runner.load_suite(suite2_dir)
+
+    def buggy_on_suite_start(manifest: SuiteManifest):
+        if manifest.name == "suite1":
+            raise ValueError("UI callback crashed on suite1")
+
+    server_cmd = [sys.executable, str(Path(__file__).parent / "integration" / "toy_server.py")]
+    multi_res = await runner.run_all_suites(
+        [m1, m2],
+        server_args=server_cmd,
+        on_suite_start=buggy_on_suite_start
+    )
+
+    assert multi_res.suites_total == 2
+    assert multi_res.suites_passed == 1
+    assert multi_res.suites_failed == 1
+    assert multi_res.exit_code == 1
+    assert multi_res.suite_results[0].suite_name == "suite1"
+    assert multi_res.suite_results[0].exit_code == 1
+    assert multi_res.suite_results[0].results[0]["status"] == "fail"
+    assert "UI callback crashed on suite1" in multi_res.suite_results[0].results[0]["message"]
+    assert multi_res.suite_results[1].suite_name == "suite2"
+    assert multi_res.suite_results[1].exit_code == 0
+
+
+
