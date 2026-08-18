@@ -153,6 +153,9 @@ class SuiteRunner:
         tags = data.get("tags", [])
         ignore_fields = data.get("ignore_fields", [])
         transcripts = data.get("transcripts", [])
+        server_hint = data.get("server_hint")
+        if server_hint is not None and not isinstance(server_hint, str):
+            server_hint = None
 
         # Validate transcript paths inside manifest
         checked_transcripts: List[str] = []
@@ -174,6 +177,7 @@ class SuiteRunner:
             ignore_fields=ignore_fields if isinstance(ignore_fields, list) else [],
             transcripts=checked_transcripts,
             suite_dir=resolved_suite_dir,
+            server_hint=server_hint,
         )
 
     def list_suites(self, suites_dir: Optional[Path] = None) -> List[SuiteManifest]:

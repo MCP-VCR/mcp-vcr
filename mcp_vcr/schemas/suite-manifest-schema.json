@@ -41,6 +41,10 @@
       },
       "description": "Optional list of JSON paths to exclude from comparison (e.g. dynamic timestamps)."
     },
+    "server_hint": {
+      "type": "string",
+      "description": "Optional server launch command hint."
+    },
     "transcripts": {
       "type": "array",
       "items": {

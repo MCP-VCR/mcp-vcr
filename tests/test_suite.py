@@ -18,6 +18,7 @@ def test_load_suite_manifest(tmp_path: Path):
                 "name": "custom_suite",
                 "description": "A custom test suite",
                 "server_package": "custom-pkg",
+                "server_hint": "python my_server.py",
                 "protocol_version": "2024-11-05",
                 "transport": "stdio",
                 "tags": ["custom", "test"],
@@ -33,11 +34,76 @@ def test_load_suite_manifest(tmp_path: Path):
     assert manifest.name == "custom_suite"
     assert manifest.description == "A custom test suite"
     assert manifest.server_package == "custom-pkg"
+    assert manifest.server_hint == "python my_server.py"
     assert manifest.protocol_version == "2024-11-05"
     assert manifest.transport == "stdio"
     assert manifest.tags == ["custom", "test"]
     assert manifest.transcripts == ["t1.yaml", "t2.yaml"]
     assert manifest.suite_dir == suite_dir
+
+
+def test_load_suite_preserves_server_hint_and_top_level_override(tmp_path: Path):
+    suites_dir = tmp_path / "suites"
+    suites_dir.mkdir()
+
+    # Suite A has server_hint in its own suite.yaml
+    suite_a_dir = suites_dir / "suite_a"
+    suite_a_dir.mkdir()
+    (suite_a_dir / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "suite_a",
+            "description": "Suite A",
+            "server_hint": "suite_level_hint_a",
+            "transcripts": ["t.yaml"]
+        }),
+        encoding="utf-8"
+    )
+
+    # Suite B has server_hint in its own suite.yaml, but top-level manifest overrides it
+    suite_b_dir = suites_dir / "suite_b"
+    suite_b_dir.mkdir()
+    (suite_b_dir / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "suite_b",
+            "description": "Suite B",
+            "server_hint": "suite_level_hint_b",
+            "transcripts": ["t.yaml"]
+        }),
+        encoding="utf-8"
+    )
+
+    (suites_dir / "manifest.yaml").write_text(
+        yaml.dump({
+            "suites": [
+                {"name": "suite_a", "path": "suite_a"},
+                {"name": "suite_b", "path": "suite_b", "server_hint": "top_level_override_b"}
+            ]
+        }),
+        encoding="utf-8"
+    )
+
+    runner = SuiteRunner()
+
+    # Direct load_suite preserves suite.yaml server_hint
+    direct_a = runner.load_suite(suite_a_dir)
+    assert direct_a.server_hint == "suite_level_hint_a"
+
+    direct_b = runner.load_suite(suite_b_dir)
+    assert direct_b.server_hint == "suite_level_hint_b"
+
+    # list_suites discovers both, retains suite_a hint and applies top_level_override_b
+    discovered = runner.list_suites(suites_dir=suites_dir)
+    sm_a = next(s for s in discovered if s.name == "suite_a")
+    sm_b = next(s for s in discovered if s.name == "suite_b")
+
+    assert sm_a.server_hint == "suite_level_hint_a"
+    assert sm_b.server_hint == "top_level_override_b"
+
+    # find_suite also gets the proper hints
+    found_a = runner.find_suite("suite_a", suites_dir=suites_dir)
+    found_b = runner.find_suite("suite_b", suites_dir=suites_dir)
+    assert found_a.server_hint == "suite_level_hint_a"
+    assert found_b.server_hint == "top_level_override_b"
 
 
 def test_load_suite_manifest_missing_transcripts(tmp_path: Path):
