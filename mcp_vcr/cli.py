@@ -1259,22 +1259,24 @@ def generate(server, output, name, transport, sse_url, sse_header, timeout, yes,
     allow_extra_args=True,
 ))
 @click.option('--suite', type=str, default=None, help="Name of the test suite to run.")
+@click.option('--all', 'all_suites', is_flag=True, help="Run all available test suites.")
 @click.option('--suites-dir', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path), default=None, help="Path to custom directory containing suites.")
 @click.option('--list-suites', is_flag=True, help="List all available test suites and exit.")
+@click.option('--use-hint', is_flag=True, help="Use the server launch command from the bundled test suite manifest.")
 @click.option('--diff-mode', type=click.Choice(['structural', 'semantic', 'strict']), default='structural', help="Diff mode for response verification (default: structural).")
 @click.option('--timeout', type=click.IntRange(min=1), default=None, help="Timeout in milliseconds per request (default: 10000).")
 @click.option('--timing-faithful', is_flag=True, default=None, help="Insert deterministic sleeps matching message timestamps.")
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path), help="Path to custom .mcp-vcr.yaml configuration.")
 @click.option('--json', 'json_output', is_flag=True, help="Output structured JSON to stdout.")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_faithful, config, json_output, server_args):
-
+def test_command(suite, all_suites, suites_dir, list_suites, use_hint, diff_mode, timeout, timing_faithful, config, json_output, server_args):
     """Run predefined test suites against an MCP server.
     
     Example:
       mcp-vcr test --list-suites
       mcp-vcr test --suite filesystem -- npx @modelcontextprotocol/server-filesystem /tmp
-      mcp-vcr test --suite memory -- npx @modelcontextprotocol/server-memory
+      mcp-vcr test --suite filesystem --use-hint
+      mcp-vcr test --all -- python server.py
     """
     from .suite import SuiteRunner
 
@@ -1283,6 +1285,30 @@ def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_fait
         timeout_ms=timeout,
         timing_faithful=timing_faithful
     )
+
+    if suite and all_suites:
+        err_msg = "--suite and --all are mutually exclusive."
+        if json_output:
+            emit_json(error_envelope("test", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        sys.exit(2)
+
+    if use_hint and all_suites:
+        err_msg = "--use-hint cannot be used with --all."
+        if json_output:
+            emit_json(error_envelope("test", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        sys.exit(2)
+
+    if use_hint and suites_dir:
+        err_msg = "--use-hint cannot be used with --suites-dir. Server hints from external suite directories are informational only and will not be executed."
+        if json_output:
+            emit_json(error_envelope("test", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        sys.exit(2)
 
     if list_suites:
         try:
@@ -1300,7 +1326,8 @@ def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_fait
                             "transport": s.transport,
                             "tags": s.tags,
                             "transcripts": s.transcripts,
-                            "suite_dir": str(s.suite_dir)
+                            "suite_dir": str(s.suite_dir),
+                            "server_hint": s.server_hint
                         }
                         for s in suites
                     ]
@@ -1316,6 +1343,8 @@ def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_fait
                         click.echo(f"{name_styled}{s.description}")
                         if s.server_package:
                             click.echo(f"                  Package: {s.server_package}")
+                        if s.server_hint:
+                            click.echo(f"                  Server hint: {s.server_hint}")
                         click.echo()
             sys.exit(0)
         except Exception as e:
@@ -1325,8 +1354,8 @@ def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_fait
                 click.secho(f"ERROR: Failed to list suites: {e}", fg="red", err=True)
             sys.exit(1)
 
-    if not suite:
-        err_msg = "No suite specified. What to try: use --suite <name> or --list-suites to see available suites."
+    if not suite and not all_suites:
+        err_msg = "No suite specified. What to try: use --suite <name>, --all, or --list-suites to see available suites."
         if json_output:
             emit_json(error_envelope("test", err_msg))
         else:
@@ -1337,13 +1366,128 @@ def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_fait
     if args and args[0] == '--':
         args = args[1:]
 
-    if not args:
-        err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+    if all_suites:
+        if not args:
+            err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+            if json_output:
+                emit_json(error_envelope("test", err_msg))
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+            sys.exit(1)
+
+        try:
+            manifests = runner.list_suites(suites_dir=suites_dir)
+        except Exception as e:
+            if json_output:
+                emit_json(error_envelope("test", e))
+            else:
+                click.secho(f"ERROR: Failed to discover suites: {e}", fg="red", err=True)
+            sys.exit(1)
+
+        if not manifests:
+            scope_str = f" in '{suites_dir}'" if suites_dir else ""
+            if json_output:
+                emit_json({
+                    "status": "ok",
+                    "command": "test",
+                    "mode": "all",
+                    "suite_results": [],
+                    "summary": {
+                        "suites_total": 0,
+                        "suites_passed": 0,
+                        "suites_failed": 0,
+                        "transcripts_total": 0,
+                        "transcripts_passed": 0,
+                        "transcripts_failed": 0,
+                        "transcripts_skipped": 0
+                    }
+                })
+            else:
+                click.secho(f"No test suites found{scope_str}.", fg="yellow")
+            sys.exit(0)
+
+        def on_suite_start(m):
+            if not json_output:
+                click.echo()
+                click.secho(f"━━ {m.name} ({len(m.transcripts)} transcripts) ━━", fg="cyan", bold=True, err=True)
+
+        def on_transcript_result(m, r):
+            if not json_output:
+                t_name = r.get("transcript", "")
+                status = r.get("status", "")
+                msg = r.get("message", "")
+                detail = r.get("detail", "")
+                if status == "pass":
+                    click.secho(f"  ✓ {t_name} — pass", fg="green")
+                else:
+                    click.secho(f"  ⚠ {t_name} — fail ({msg})", fg="red", err=True)
+                    if detail:
+                        click.echo(f"    {detail.strip()}", err=True)
+
+        try:
+            multi_res = asyncio.run(runner.run_all_suites(
+                manifests,
+                server_args=args,
+                diff_mode=diff_mode,
+                on_suite_start=on_suite_start,
+                on_transcript_result=on_transcript_result
+            ))
+        except Exception as e:
+            if json_output:
+                emit_json(error_envelope("test", e))
+            else:
+                click.secho(f"ERROR: Multi-suite execution failed: {e}", fg="red", err=True)
+            sys.exit(1)
+
         if json_output:
-            emit_json(error_envelope("test", err_msg))
+            emit_json({
+                "status": "ok" if multi_res.exit_code == 0 else "fail",
+                "command": "test",
+                "mode": "all",
+                "suite_results": [
+                    {
+                        "suite": s_res.suite_name,
+                        "status": "ok" if s_res.exit_code == 0 else "fail",
+                        "results": [
+                            {
+                                "transcript": r["transcript"],
+                                "status": r["status"],
+                                "message": r["message"],
+                                "diff": r["diff"]
+                            }
+                            for r in s_res.results
+                        ],
+                        "summary": {
+                            "total": s_res.total,
+                            "passed": s_res.passed,
+                            "failed": s_res.failed,
+                            "skipped": s_res.skipped
+                        }
+                    }
+                    for s_res in multi_res.suite_results
+                ],
+                "summary": {
+                    "suites_total": multi_res.suites_total,
+                    "suites_passed": multi_res.suites_passed,
+                    "suites_failed": multi_res.suites_failed,
+                    "transcripts_total": multi_res.transcripts_total,
+                    "transcripts_passed": multi_res.transcripts_passed,
+                    "transcripts_failed": multi_res.transcripts_failed,
+                    "transcripts_skipped": multi_res.transcripts_skipped
+                }
+            })
         else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(1)
+            click.echo()
+            res_color = "green" if multi_res.exit_code == 0 else "red"
+            click.secho(
+                f"RESULT: {multi_res.suites_passed}/{multi_res.suites_total} suites passed | "
+                f"{multi_res.transcripts_passed}/{multi_res.transcripts_total} transcripts passed, "
+                f"{multi_res.transcripts_failed}/{multi_res.transcripts_total} failed",
+                fg=res_color,
+                bold=True
+            )
+
+        sys.exit(multi_res.exit_code)
 
     try:
         manifest = runner.find_suite(suite, suites_dir=suites_dir)
@@ -1353,6 +1497,67 @@ def test_command(suite, suites_dir, list_suites, diff_mode, timeout, timing_fait
         else:
             click.secho(f"ERROR: {e}", fg="red", err=True)
         sys.exit(1)
+
+    if not args:
+        if use_hint:
+            if not runner.is_bundled_suite(manifest):
+                err_msg = f"--use-hint can only be used with bundled suites. Suite '{manifest.name}' is from an external directory."
+                if json_output:
+                    emit_json(error_envelope("test", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                sys.exit(1)
+
+            if not manifest.server_hint:
+                err_msg = f"No server hint defined for suite '{manifest.name}'."
+                if json_output:
+                    emit_json(error_envelope("test", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                sys.exit(1)
+
+            dangerous_chars = [";", "&", "|", "<", ">", "$", "`", "\n", "\r"]
+            if any(ch in manifest.server_hint for ch in dangerous_chars):
+                err_msg = f"Server hint contains unsupported shell characters: {manifest.server_hint}"
+                if json_output:
+                    emit_json(error_envelope("test", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                sys.exit(1)
+
+            import shlex
+            try:
+                args = shlex.split(manifest.server_hint)
+            except Exception as e:
+                err_msg = f"Failed to parse server hint '{manifest.server_hint}': {e}"
+                if json_output:
+                    emit_json(error_envelope("test", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                sys.exit(1)
+
+            if not args:
+                err_msg = f"Server hint for suite '{manifest.name}' is empty."
+                if json_output:
+                    emit_json(error_envelope("test", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                sys.exit(1)
+        else:
+            if manifest.server_hint:
+                err_msg = (
+                    f"No server command specified.\n"
+                    f"  Hint from suite manifest: {manifest.server_hint}\n"
+                    f"  To auto-launch: mcp-vcr test --suite {manifest.name} --use-hint\n"
+                    f"  To use a custom server: mcp-vcr test --suite {manifest.name} -- your-command"
+                )
+            else:
+                err_msg = "No server command specified. What to try: pass the server command and arguments after a '--' separator."
+            if json_output:
+                emit_json(error_envelope("test", err_msg))
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+            sys.exit(1)
 
     if not json_output:
         click.secho(f"Suite: {manifest.name} ({len(manifest.transcripts)} transcripts)", fg="cyan", bold=True, err=True)

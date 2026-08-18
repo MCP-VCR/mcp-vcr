@@ -58,6 +58,7 @@ class SuiteManifest:
     ignore_fields: List[str] = field(default_factory=list)
     transcripts: List[str] = field(default_factory=list)
     suite_dir: Path = field(default_factory=lambda: Path("."))
+    server_hint: Optional[str] = None
 
 
 @dataclass
@@ -71,6 +72,21 @@ class SuiteResult:
     skipped: int
     exit_code: int
     results: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class MultiSuiteResult:
+    """Summary of multiple suites run execution."""
+
+    suites_total: int
+    suites_passed: int
+    suites_failed: int
+    transcripts_total: int
+    transcripts_passed: int
+    transcripts_failed: int
+    transcripts_skipped: int
+    exit_code: int
+    suite_results: List[SuiteResult] = field(default_factory=list)
 
 
 class SuiteRunner:
@@ -93,6 +109,14 @@ class SuiteRunner:
         """Locate the bundled mcp_vcr/community directory."""
         ref = importlib.resources.files("mcp_vcr").joinpath("community")
         return Path(str(ref))
+
+    def is_bundled_suite(self, manifest: SuiteManifest) -> bool:
+        """Check if a suite manifest originates from the bundled community package directory."""
+        try:
+            bundled_dir = self.get_bundled_suites_dir().resolve()
+            return manifest.suite_dir.resolve().is_relative_to(bundled_dir)
+        except Exception:
+            return False
 
     def load_suite(self, suite_dir: Path) -> SuiteManifest:
         """
@@ -181,6 +205,8 @@ class SuiteRunner:
                             if s_dir.is_relative_to(target_dir) and s_dir.is_dir():
                                 try:
                                     sm = self.load_suite(s_dir)
+                                    if "server_hint" in item and isinstance(item["server_hint"], str):
+                                        sm.server_hint = item["server_hint"]
                                     discovered[sm.name] = sm
                                     loaded_dirs.add(s_dir)
                                 except Exception as e:
@@ -397,4 +423,61 @@ class SuiteRunner:
             skipped=skipped_count,
             results=results,
             exit_code=exit_code,
+        )
+
+    async def run_all_suites(
+        self,
+        manifests: List[SuiteManifest],
+        server_args: List[str],
+        diff_mode: str = "structural",
+        on_suite_start: Optional[Callable[[SuiteManifest], None]] = None,
+        on_transcript_result: Optional[Callable[[SuiteManifest, Dict[str, Any]], None]] = None,
+    ) -> MultiSuiteResult:
+        """
+        Run all test suites sequentially against the target server.
+        """
+        suite_results: List[SuiteResult] = []
+        suites_passed = 0
+        suites_failed = 0
+        transcripts_total = 0
+        transcripts_passed = 0
+        transcripts_failed = 0
+        transcripts_skipped = 0
+
+        for manifest in manifests:
+            if on_suite_start:
+                on_suite_start(manifest)
+
+            callback = None
+            if on_transcript_result:
+                callback = lambda r, m=manifest: on_transcript_result(m, r)
+
+            res = await self.run_suite(
+                manifest,
+                server_args=server_args,
+                diff_mode=diff_mode,
+                on_transcript_result=callback,
+            )
+            suite_results.append(res)
+            if res.exit_code == 0:
+                suites_passed += 1
+            else:
+                suites_failed += 1
+
+            transcripts_total += res.total
+            transcripts_passed += res.passed
+            transcripts_failed += res.failed
+            transcripts_skipped += res.skipped
+
+        exit_code = 1 if suites_failed > 0 else 0
+        return MultiSuiteResult(
+            suites_total=len(manifests),
+            suites_passed=suites_passed,
+            suites_failed=suites_failed,
+            transcripts_total=transcripts_total,
+            transcripts_passed=transcripts_passed,
+            transcripts_failed=transcripts_failed,
+            transcripts_skipped=transcripts_skipped,
+            exit_code=exit_code,
+            suite_results=suite_results,
         )

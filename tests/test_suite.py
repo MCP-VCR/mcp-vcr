@@ -424,3 +424,131 @@ async def test_suite_runner_with_toy_server(tmp_path: Path):
     leftover_replays = list(suite_dir.glob("*-replay-*.yaml")) + list(suite_dir.glob("*-replay-*.yml"))
     assert leftover_replays == []
 
+
+def test_suite_server_hint_loaded_from_top_manifest():
+    runner = SuiteRunner()
+    suites = runner.list_suites()
+    fs_suite = next((s for s in suites if s.name == "filesystem"), None)
+    assert fs_suite is not None
+    assert fs_suite.server_hint == "npx @modelcontextprotocol/server-filesystem /tmp"
+
+    memory_suite = next((s for s in suites if s.name == "memory"), None)
+    assert memory_suite is not None
+    assert memory_suite.server_hint == "npx @modelcontextprotocol/server-memory"
+
+
+def test_is_bundled_suite(tmp_path: Path):
+    runner = SuiteRunner()
+    bundled_suites = runner.list_suites()
+    assert len(bundled_suites) > 0
+    for s in bundled_suites:
+        assert runner.is_bundled_suite(s) is True
+
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir()
+    (custom_dir / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "custom",
+            "description": "Custom suite",
+            "transcripts": ["t.yaml"]
+        }),
+        encoding="utf-8"
+    )
+    custom_manifest = runner.load_suite(custom_dir)
+    assert runner.is_bundled_suite(custom_manifest) is False
+
+
+@pytest.mark.asyncio
+async def test_run_all_suites_with_toy_server(tmp_path: Path):
+    # Create two test suites
+    suite1_dir = tmp_path / "suite1"
+    suite1_dir.mkdir()
+    suite2_dir = tmp_path / "suite2"
+    suite2_dir.mkdir()
+
+    t_pass = {
+        "meta": {
+            "version": 1,
+            "recorded_at": "2026-08-16T12:00:00.000Z",
+            "session_id": "11112222",
+            "server_command": ["python", "tests/integration/toy_server.py"],
+            "protocol_version": "2024-11-05",
+            "client_hint": "pytest",
+            "schema_version": "1.0",
+        },
+        "messages": [
+            {
+                "t": 0,
+                "dir": "c2s",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test", "version": "1.0"},
+                    },
+                },
+            },
+            {
+                "t": 25,
+                "dir": "s2c",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
+                        "serverInfo": {"name": "toy-server", "version": "1.0.0"},
+                    },
+                },
+            },
+            {
+                "t": 30,
+                "dir": "c2s",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/initialized",
+                },
+            },
+        ],
+    }
+
+    (suite1_dir / "t1.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
+    (suite1_dir / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "suite1",
+            "description": "Suite 1 pass",
+            "transcripts": ["t1.yaml"]
+        }),
+        encoding="utf-8"
+    )
+
+    (suite2_dir / "t2.yaml").write_text(yaml.dump(t_pass), encoding="utf-8")
+    (suite2_dir / "suite.yaml").write_text(
+        yaml.dump({
+            "name": "suite2",
+            "description": "Suite 2 pass",
+            "transcripts": ["t2.yaml"]
+        }),
+        encoding="utf-8"
+    )
+
+    runner = SuiteRunner()
+    m1 = runner.load_suite(suite1_dir)
+    m2 = runner.load_suite(suite2_dir)
+
+    server_cmd = [sys.executable, str(Path(__file__).parent / "integration" / "toy_server.py")]
+    multi_res = await runner.run_all_suites([m1, m2], server_args=server_cmd)
+
+    assert multi_res.suites_total == 2
+    assert multi_res.suites_passed == 2
+    assert multi_res.suites_failed == 0
+    assert multi_res.transcripts_total == 2
+    assert multi_res.transcripts_passed == 2
+    assert multi_res.transcripts_failed == 0
+    assert multi_res.exit_code == 0
+    assert len(multi_res.suite_results) == 2
+
+
