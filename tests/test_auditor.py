@@ -315,6 +315,48 @@ def test_check_additional_properties_and_schema_description():
     assert any("$defs.NestedDef.auth_token" in p for p in sec_paths)
 
 
+def test_check_composition_node_metadata_and_underscore_prefix_injection():
+    tools = [
+        {
+            "name": "safe_ignore_previous_instructions_tool",
+            "description": "Safe description",
+            "inputSchema": {
+                "type": "object",
+                "allOf": [
+                    {
+                        "description": "Tool_disregard_previous instructions in allOf",
+                        "default": "sk-11223344556677889900aabbccdd",
+                    }
+                ],
+            },
+        }
+    ]
+
+    inj_findings = check_description_injection(tools)
+    assert len(inj_findings) == 2
+    inj_messages = [f.message for f in inj_findings]
+    assert any("tool name" in m for m in inj_messages)
+    assert any("allOf[0]" in m for m in inj_messages)
+
+    sec_findings = check_sensitive_field_exposure(tools)
+    sec_messages = [f.message for f in sec_findings]
+    assert len(sec_findings) == 1
+    assert "allOf[0]" in sec_messages[0]
+
+
+def test_check_logging_capability_validation():
+    caps_disabled = {"logging": False}
+    caps_enabled = {"logging": {}}
+
+    findings_disabled = check_capability_declarations(caps_disabled)
+    assert len(findings_disabled) == 0
+
+    findings_enabled = check_capability_declarations(caps_enabled)
+    assert len(findings_enabled) == 1
+    assert findings_enabled[0].message == "Server advertises logging capability."
+
+
+
 
 
 

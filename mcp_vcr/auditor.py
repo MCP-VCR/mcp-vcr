@@ -21,17 +21,18 @@ BENIGN_METADATA_PREFIXES = {
 
 # Injection indicators in tool descriptions
 INJECTION_PATTERNS = [
-    (re.compile(r"\bignore[\s_-]+previous(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'ignore previous'"),
-    (re.compile(r"\bdisregard[\s_-]+(?:all[\s_-]+)?previous(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'disregard previous'"),
-    (re.compile(r"\byou[\s_-]+are[\s_-]+now(?:[\s_-]|$|\b)", re.IGNORECASE), "role override 'you are now'"),
-    (re.compile(r"\bsystem[\s_-]+prompt(?:[\s_-]|$|\b)", re.IGNORECASE), "system prompt injection indicator"),
-    (re.compile(r"\bdo[\s_-]+not[\s_-]+follow(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'do not follow'"),
-    (re.compile(r"\bforget[\s_-]+(?:your[\s_-]+)?instructions(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'forget instructions'"),
+    (re.compile(r"(?:^|[^a-zA-Z0-9])ignore[\s_-]+previous(?:[^a-zA-Z0-9]|$)", re.IGNORECASE), "instruction override 'ignore previous'"),
+    (re.compile(r"(?:^|[^a-zA-Z0-9])disregard[\s_-]+(?:all[\s_-]+)?previous(?:[^a-zA-Z0-9]|$)", re.IGNORECASE), "instruction override 'disregard previous'"),
+    (re.compile(r"(?:^|[^a-zA-Z0-9])you[\s_-]+are[\s_-]+now(?:[^a-zA-Z0-9]|$)", re.IGNORECASE), "role override 'you are now'"),
+    (re.compile(r"(?:^|[^a-zA-Z0-9])system[\s_-]+prompt(?:[^a-zA-Z0-9]|$)", re.IGNORECASE), "system prompt injection indicator"),
+    (re.compile(r"(?:^|[^a-zA-Z0-9])do[\s_-]+not[\s_-]+follow(?:[^a-zA-Z0-9]|$)", re.IGNORECASE), "instruction override 'do not follow'"),
+    (re.compile(r"(?:^|[^a-zA-Z0-9])forget[\s_-]+(?:your[\s_-]+)?instructions(?:[^a-zA-Z0-9]|$)", re.IGNORECASE), "instruction override 'forget instructions'"),
     (re.compile(r"<(?:script|iframe|img\s+onerror)\b", re.IGNORECASE), "HTML code injection element"),
     (re.compile(r"javascript:", re.IGNORECASE), "javascript URI scheme"),
     (re.compile(r"\[\]\(https?://[^\s\)]+\)", re.IGNORECASE), "deceptive empty-label markdown link"),
     (re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"), "hidden/directional unicode control character"),
 ]
+
 
 
 # Literal secret regexes
@@ -158,6 +159,7 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
             for idx, comp_schema in enumerate(comp_list):
                 if isinstance(comp_schema, dict):
                     comp_path = f"{path_prefix}.{comp_key}[{idx}]" if path_prefix else f"{comp_key}[{idx}]"
+                    results.append((comp_path, comp_schema))
                     results.extend(_extract_schema_properties(comp_schema, path_prefix=comp_path))
 
     for defs_key in ("$defs", "definitions"):
@@ -166,6 +168,7 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
             for def_name, def_schema in defs.items():
                 if isinstance(def_schema, dict):
                     def_path = f"{path_prefix}.{defs_key}.{def_name}" if path_prefix else f"{defs_key}.{def_name}"
+                    results.append((def_path, def_schema))
                     results.extend(_extract_schema_properties(def_schema, path_prefix=def_path))
 
     return results
@@ -223,7 +226,12 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
         extracted = _extract_schema_properties(schema)
         for p_path, p_schema in extracted:
             leaf_name = p_path.split(".")[-1]
-            if not leaf_name.endswith("[]") and is_sensitive_property_name(leaf_name):
+            is_synthetic_path = (
+                leaf_name.endswith("[]")
+                or leaf_name == "*"
+                or any(k in leaf_name for k in ("allOf[", "anyOf[", "oneOf[", "$defs", "definitions"))
+            )
+            if not is_synthetic_path and is_sensitive_property_name(leaf_name):
                 findings.append(
                     AuditFinding(
                         check="sensitive-field-exposure",
@@ -289,7 +297,7 @@ def check_capability_declarations(capabilities: Dict[str, Any]) -> List[AuditFin
                 )
             )
 
-    if "logging" in capabilities:
+    if "logging" in capabilities and isinstance(capabilities["logging"], dict):
         findings.append(
             AuditFinding(
                 check="capability-declaration",
