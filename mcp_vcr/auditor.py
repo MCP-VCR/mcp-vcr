@@ -141,7 +141,10 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
 
     items = schema.get("items")
     if isinstance(items, dict):
-        results.extend(_extract_schema_properties(items, path_prefix=f"{path_prefix}[]" if path_prefix else "[]"))
+        item_path = f"{path_prefix}[]" if path_prefix else "[]"
+        results.append((item_path, items))
+        results.extend(_extract_schema_properties(items, path_prefix=item_path))
+
 
     for comp_key in ("allOf", "anyOf", "oneOf"):
         comp_list = schema.get(comp_key)
