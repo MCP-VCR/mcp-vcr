@@ -33,6 +33,13 @@ from .transports.stdio import (
 )
 from .replay import ReplayEngine
 from .generator import GeneratorEngine, DiscoveryResult, ToolCallResult
+from .auditor import (
+    AuditEngine,
+    AuditFinding,
+    AuditResult,
+    is_sensitive_property_name,
+    normalize_property_name,
+)
 
 __all__ = [
     "Transcript",
@@ -68,5 +75,11 @@ __all__ = [
     "GeneratorEngine",
     "DiscoveryResult",
     "ToolCallResult",
+    "AuditEngine",
+    "AuditFinding",
+    "AuditResult",
+    "is_sensitive_property_name",
+    "normalize_property_name",
 ]
+
 
