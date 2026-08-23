@@ -136,16 +136,20 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
             if isinstance(p_schema, dict):
                 current_path = f"{path_prefix}.{p_name}" if path_prefix else str(p_name)
                 results.append((current_path, p_schema))
-                # Recurse into object properties
+                # Recurse into property schema (handles nested properties, items, composition, etc.)
                 results.extend(_extract_schema_properties(p_schema, path_prefix=current_path))
-                # Recurse into array items
-                items = p_schema.get("items")
-                if isinstance(items, dict):
-                    results.extend(_extract_schema_properties(items, path_prefix=f"{current_path}[]"))
 
     items = schema.get("items")
     if isinstance(items, dict):
         results.extend(_extract_schema_properties(items, path_prefix=f"{path_prefix}[]" if path_prefix else "[]"))
+
+    for comp_key in ("allOf", "anyOf", "oneOf"):
+        comp_list = schema.get(comp_key)
+        if isinstance(comp_list, list):
+            for idx, comp_schema in enumerate(comp_list):
+                if isinstance(comp_schema, dict):
+                    comp_path = f"{path_prefix}.{comp_key}[{idx}]" if path_prefix else f"{comp_key}[{idx}]"
+                    results.extend(_extract_schema_properties(comp_schema, path_prefix=comp_path))
 
     for defs_key in ("$defs", "definitions"):
         defs = schema.get(defs_key)
@@ -156,6 +160,7 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
                     results.extend(_extract_schema_properties(def_schema, path_prefix=def_path))
 
     return results
+
 
 
 def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFinding]:
