@@ -1663,12 +1663,13 @@ async def run_audit(
             for f in res.findings:
                 sev_color = "red" if f.severity == "high" else ("yellow" if f.severity == "medium" else "cyan")
                 sev_str = click.style(f"  {f.severity.upper():<6}", fg=sev_color, bold=True)
-                tool_scope = f"tool \"{f.tool}\"" if f.tool else "server"
-                click.echo(f"{sev_str} [{f.check}] {tool_scope}", err=True)
-                click.echo(f"        {f.message}", err=True)
+                tool_scope = f"tool \"{_terminal_safe(f.tool)}\"" if f.tool else "server"
+                click.echo(f"{sev_str} [{_terminal_safe(f.check)}] {tool_scope}", err=True)
+                click.echo(f"        {_terminal_safe(f.message)}", err=True)
                 if f.detail:
-                    click.echo(f"        Detail: {f.detail}", err=True)
+                    click.echo(f"        Detail: {_terminal_safe(f.detail)}", err=True)
                 click.echo(err=True)
+
 
         click.secho("━━ Summary ━━", fg="cyan", bold=True, err=True)
         sum_str = f"{len(res.checks_run)} checks completed | {res.summary['total']} findings ({res.summary['high']} high, {res.summary['medium']} medium, {res.summary['low']} low, {res.summary['info']} info)"

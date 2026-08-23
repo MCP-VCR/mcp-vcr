@@ -76,7 +76,7 @@ Focus: Differentiate mcp-vcr as a security-conscious testing tool.
 
 ### 1. Security Audit Suite — Passive Mode (`mcp-vcr audit --passive`) — Shipped
 *   **Objective**: Detect prompt injection risks, sensitive field exposures in schemas, and report advertised capability declarations without sending adversarial payloads.
-*   **Mechanism**: `mcp-vcr audit --passive "python server.py"` launches the server, inspects `initialize` result and `tools/list` response, and runs static pattern matching and field analysis:
+*   **Mechanism**: `mcp-vcr audit --passive -- python server.py` launches the server, inspects `initialize` result and `tools/list` response, and runs static pattern matching and field analysis:
     *   **Tool description injection**: Detect descriptions containing instruction-override phrases, HTML/script injection, deceptive markdown links, or hidden unicode control characters.
     *   **Sensitive field exposure**: Detect input schema property names indicating secret inputs (`api_key`, `token`, `password`, `credential`, `secret`, `bearer`) while excluding benign metadata terms (`credential_count`, `token_type`), and detect unredacted literal secret tokens in default values or descriptions.
     *   **Capability declarations**: Report advertised server capabilities (`resources.subscribe`, `tools.listChanged`, `logging`) as informational findings.

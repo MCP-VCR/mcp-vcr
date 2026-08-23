@@ -124,6 +124,40 @@ class AuditResult:
     exit_code: int
 
 
+def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") -> List[Tuple[str, Dict[str, Any]]]:
+    """Recursively traverse a JSON Schema dictionary and return (property_path, prop_schema) pairs."""
+    results: List[Tuple[str, Dict[str, Any]]] = []
+    if not isinstance(schema, dict):
+        return results
+
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        for p_name, p_schema in props.items():
+            if isinstance(p_schema, dict):
+                current_path = f"{path_prefix}.{p_name}" if path_prefix else str(p_name)
+                results.append((current_path, p_schema))
+                # Recurse into object properties
+                results.extend(_extract_schema_properties(p_schema, path_prefix=current_path))
+                # Recurse into array items
+                items = p_schema.get("items")
+                if isinstance(items, dict):
+                    results.extend(_extract_schema_properties(items, path_prefix=f"{current_path}[]"))
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        results.extend(_extract_schema_properties(items, path_prefix=f"{path_prefix}[]" if path_prefix else "[]"))
+
+    for defs_key in ("$defs", "definitions"):
+        defs = schema.get(defs_key)
+        if isinstance(defs, dict):
+            for def_name, def_schema in defs.items():
+                if isinstance(def_schema, dict):
+                    def_path = f"{defs_key}.{def_name}"
+                    results.extend(_extract_schema_properties(def_schema, path_prefix=def_path))
+
+    return results
+
+
 def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFinding]:
     """Scan tool name, description, and input schema descriptions for prompt injection indicators."""
     findings: List[AuditFinding] = []
@@ -134,13 +168,12 @@ def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFindin
         ]
         schema = tool.get("inputSchema", {})
         if isinstance(schema, dict):
-            props = schema.get("properties", {})
-            if isinstance(props, dict):
-                for p_name, p_schema in props.items():
-                    if isinstance(p_schema, dict) and "description" in p_schema:
-                        fields_to_check.append(
-                            (f"property '{p_name}' description", str(p_schema["description"]))
-                        )
+            extracted = _extract_schema_properties(schema)
+            for p_path, p_schema in extracted:
+                if "description" in p_schema and isinstance(p_schema["description"], str):
+                    fields_to_check.append(
+                        (f"property '{p_path}' description", p_schema["description"])
+                    )
 
         for field_label, text in fields_to_check:
             if not text or not isinstance(text, str):
@@ -170,44 +203,44 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
         if not isinstance(schema, dict):
             continue
 
-        props = schema.get("properties", {})
-        if isinstance(props, dict):
-            for p_name, p_schema in props.items():
-                if is_sensitive_property_name(p_name):
-                    findings.append(
-                        AuditFinding(
-                            check="sensitive-field-exposure",
-                            severity="medium",
-                            tool=t_name,
-                            message=f"Input schema property '{p_name}' indicates secret handling",
-                            detail=f"Property name '{p_name}' matches sensitive field patterns",
-                        )
+        extracted = _extract_schema_properties(schema)
+        for p_path, p_schema in extracted:
+            leaf_name = p_path.split(".")[-1].replace("[]", "")
+            if is_sensitive_property_name(leaf_name):
+                findings.append(
+                    AuditFinding(
+                        check="sensitive-field-exposure",
+                        severity="medium",
+                        tool=t_name,
+                        message=f"Input schema property '{p_path}' indicates secret handling",
+                        detail=f"Property name '{p_path}' matches sensitive field patterns",
                     )
+                )
 
-                if isinstance(p_schema, dict):
-                    # Check defaults and descriptions for literal secrets
-                    values_to_check = []
-                    if "default" in p_schema and isinstance(p_schema["default"], str):
-                        values_to_check.append(("default value", p_schema["default"]))
-                    if "description" in p_schema and isinstance(p_schema["description"], str):
-                        values_to_check.append(("description", p_schema["description"]))
+            # Check defaults and descriptions for literal secrets
+            values_to_check = []
+            if "default" in p_schema and isinstance(p_schema["default"], str):
+                values_to_check.append(("default value", p_schema["default"]))
+            if "description" in p_schema and isinstance(p_schema["description"], str):
+                values_to_check.append(("description", p_schema["description"]))
 
-                    for source_label, text_val in values_to_check:
-                        for pattern, secret_type in SECRET_REGEXES:
-                            for match in pattern.finditer(text_val):
-                                candidate = match.group(1) if match.groups() else match.group(0)
-                                if not is_placeholder_secret(candidate):
-                                    findings.append(
-                                        AuditFinding(
-                                            check="sensitive-field-exposure",
-                                            severity="high",
-                                            tool=t_name,
-                                            message=f"Property '{p_name}' {source_label} contains literal {secret_type}",
-                                            detail=f"Found unredacted {secret_type}",
-                                        )
-                                    )
+            for source_label, text_val in values_to_check:
+                for pattern, secret_type in SECRET_REGEXES:
+                    for match in pattern.finditer(text_val):
+                        candidate = match.group(1) if match.groups() else match.group(0)
+                        if not is_placeholder_secret(candidate):
+                            findings.append(
+                                AuditFinding(
+                                    check="sensitive-field-exposure",
+                                    severity="high",
+                                    tool=t_name,
+                                    message=f"Property '{p_path}' {source_label} contains literal {secret_type}",
+                                    detail=f"Found unredacted {secret_type}",
+                                )
+                            )
 
     return findings
+
 
 
 def check_capability_declarations(capabilities: Dict[str, Any]) -> List[AuditFinding]:
