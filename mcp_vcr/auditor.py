@@ -21,17 +21,18 @@ BENIGN_METADATA_PREFIXES = {
 
 # Injection indicators in tool descriptions
 INJECTION_PATTERNS = [
-    (re.compile(r"\bignore\s+previous\b", re.IGNORECASE), "instruction override 'ignore previous'"),
-    (re.compile(r"\bdisregard\s+(?:all\s+)?previous\b", re.IGNORECASE), "instruction override 'disregard previous'"),
-    (re.compile(r"\byou\s+are\s+now\b", re.IGNORECASE), "role override 'you are now'"),
-    (re.compile(r"\bsystem\s+prompt\b", re.IGNORECASE), "system prompt injection indicator"),
-    (re.compile(r"\bdo\s+not\s+follow\b", re.IGNORECASE), "instruction override 'do not follow'"),
-    (re.compile(r"\bforget\s+(?:your\s+)?instructions\b", re.IGNORECASE), "instruction override 'forget instructions'"),
+    (re.compile(r"\bignore[\s_-]+previous(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'ignore previous'"),
+    (re.compile(r"\bdisregard[\s_-]+(?:all[\s_-]+)?previous(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'disregard previous'"),
+    (re.compile(r"\byou[\s_-]+are[\s_-]+now(?:[\s_-]|$|\b)", re.IGNORECASE), "role override 'you are now'"),
+    (re.compile(r"\bsystem[\s_-]+prompt(?:[\s_-]|$|\b)", re.IGNORECASE), "system prompt injection indicator"),
+    (re.compile(r"\bdo[\s_-]+not[\s_-]+follow(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'do not follow'"),
+    (re.compile(r"\bforget[\s_-]+(?:your[\s_-]+)?instructions(?:[\s_-]|$|\b)", re.IGNORECASE), "instruction override 'forget instructions'"),
     (re.compile(r"<(?:script|iframe|img\s+onerror)\b", re.IGNORECASE), "HTML code injection element"),
     (re.compile(r"javascript:", re.IGNORECASE), "javascript URI scheme"),
     (re.compile(r"\[\]\(https?://[^\s\)]+\)", re.IGNORECASE), "deceptive empty-label markdown link"),
     (re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"), "hidden/directional unicode control character"),
 ]
+
 
 # Literal secret regexes
 SECRET_REGEXES = [
@@ -145,6 +146,11 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
         results.append((item_path, items))
         results.extend(_extract_schema_properties(items, path_prefix=item_path))
 
+    add_props = schema.get("additionalProperties")
+    if isinstance(add_props, dict):
+        add_path = f"{path_prefix}.*" if path_prefix else ".*"
+        results.append((add_path, add_props))
+        results.extend(_extract_schema_properties(add_props, path_prefix=add_path))
 
     for comp_key in ("allOf", "anyOf", "oneOf"):
         comp_list = schema.get(comp_key)
@@ -159,11 +165,10 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
         if isinstance(defs, dict):
             for def_name, def_schema in defs.items():
                 if isinstance(def_schema, dict):
-                    def_path = f"{defs_key}.{def_name}"
+                    def_path = f"{path_prefix}.{defs_key}.{def_name}" if path_prefix else f"{defs_key}.{def_name}"
                     results.extend(_extract_schema_properties(def_schema, path_prefix=def_path))
 
     return results
-
 
 
 def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFinding]:
@@ -172,10 +177,13 @@ def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFindin
     for tool in tools:
         t_name = tool.get("name", "unnamed")
         fields_to_check = [
+            ("tool name", tool.get("name", "")),
             ("tool description", tool.get("description", "")),
         ]
         schema = tool.get("inputSchema", {})
         if isinstance(schema, dict):
+            if "description" in schema and isinstance(schema["description"], str):
+                fields_to_check.append(("inputSchema description", schema["description"]))
             extracted = _extract_schema_properties(schema)
             for p_path, p_schema in extracted:
                 if "description" in p_schema and isinstance(p_schema["description"], str):
@@ -200,6 +208,7 @@ def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFindin
                         )
                     )
     return findings
+
 
 
 def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFinding]:
