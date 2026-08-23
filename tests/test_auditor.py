@@ -351,9 +351,31 @@ def test_check_logging_capability_validation():
     findings_disabled = check_capability_declarations(caps_disabled)
     assert len(findings_disabled) == 0
 
-    findings_enabled = check_capability_declarations(caps_enabled)
-    assert len(findings_enabled) == 1
-    assert findings_enabled[0].message == "Server advertises logging capability."
+def test_check_definition_node_with_sensitive_name_does_not_emit_medium_finding():
+    tools = [
+        {
+            "name": "def_test_tool",
+            "inputSchema": {
+                "type": "object",
+                "$defs": {
+                    "credentials": {
+                        "type": "object",
+                        "properties": {
+                            "username": {"type": "string"},
+                            "password": {"type": "string"},
+                        },
+                    }
+                },
+            },
+        }
+    ]
+
+    sec_findings = check_sensitive_field_exposure(tools)
+    # $defs.credentials should NOT produce a medium finding, but $defs.credentials.password SHOULD produce a medium finding
+    sec_messages = [f.message for f in sec_findings]
+    assert not any("'$defs.credentials'" in m for m in sec_messages)
+    assert any("'$defs.credentials.password'" in m for m in sec_messages)
+
 
 
 

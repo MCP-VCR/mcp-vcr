@@ -225,11 +225,14 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
 
         extracted = _extract_schema_properties(schema)
         for p_path, p_schema in extracted:
-            leaf_name = p_path.split(".")[-1]
+            parts = p_path.split(".")
+            leaf_name = parts[-1]
+            is_def_node = len(parts) >= 2 and parts[-2] in ("$defs", "definitions")
             is_synthetic_path = (
                 leaf_name.endswith("[]")
                 or leaf_name == "*"
-                or any(k in leaf_name for k in ("allOf[", "anyOf[", "oneOf[", "$defs", "definitions"))
+                or any(k in leaf_name for k in ("allOf[", "anyOf[", "oneOf["))
+                or is_def_node
             )
             if not is_synthetic_path and is_sensitive_property_name(leaf_name):
                 findings.append(
@@ -241,6 +244,7 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
                         detail=f"Property name '{p_path}' matches sensitive field patterns",
                     )
                 )
+
 
 
             # Check defaults and descriptions for literal secrets
