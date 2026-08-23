@@ -263,11 +263,14 @@ def test_check_primitive_array_item_schema():
     assert "credentials[]" in inj_findings[0].message
 
     sec_findings = check_sensitive_field_exposure(tools)
-    # credentials (medium name 'credentials' -> Wait, 'credentials' property name is sensitive if named credentials, but here leaf is 'credentials')
-    # plus credentials[] literal secret default (high)
+    assert len(sec_findings) == 2
+    medium_findings = [f for f in sec_findings if f.severity == "medium"]
     high_findings = [f for f in sec_findings if f.severity == "high"]
+    assert len(medium_findings) == 1
+    assert "credentials" in medium_findings[0].message
     assert len(high_findings) == 1
     assert "credentials[]" in high_findings[0].message
+
 
 
 

@@ -213,8 +213,8 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
 
         extracted = _extract_schema_properties(schema)
         for p_path, p_schema in extracted:
-            leaf_name = p_path.split(".")[-1].replace("[]", "")
-            if is_sensitive_property_name(leaf_name):
+            leaf_name = p_path.split(".")[-1]
+            if not leaf_name.endswith("[]") and is_sensitive_property_name(leaf_name):
                 findings.append(
                     AuditFinding(
                         check="sensitive-field-exposure",
@@ -224,6 +224,7 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
                         detail=f"Property name '{p_path}' matches sensitive field patterns",
                     )
                 )
+
 
             # Check defaults and descriptions for literal secrets
             values_to_check = []
