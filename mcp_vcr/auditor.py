@@ -54,7 +54,8 @@ def normalize_property_name(prop_name: str) -> Tuple[str, List[str]]:
     s0 = re.sub(r"(?i)OAuth", "oauth", prop_name)
     s1 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s0)
     s2 = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s1)
-    snake_case = s2.lower().replace("-", "_")
+    s3 = re.sub(r"[^a-zA-Z0-9]+", "_", s2)
+    snake_case = s3.lower().strip("_")
     raw_tokens = [t for t in snake_case.split("_") if t]
     tokens = [
         t[:-1] if t.endswith("s") and len(t) > 1 and t[:-1] in SENSITIVE_ROOTS else t
@@ -140,9 +141,14 @@ def _extract_string_values(val: Any) -> List[str]:
     return strings
 
 
-def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") -> List[Tuple[str, Dict[str, Any], bool]]:
-    """Recursively traverse a JSON Schema dictionary and return (property_path, prop_schema, is_def_node) tuples."""
-    results: List[Tuple[str, Dict[str, Any], bool]] = []
+def _extract_schema_properties(
+    schema: Dict[str, Any], path_prefix: str = ""
+) -> List[Tuple[str, Dict[str, Any], bool, Optional[str]]]:
+    """Recursively traverse a JSON Schema dictionary.
+
+    Returns (display_path, prop_schema, is_property, raw_prop_name) tuples.
+    """
+    results: List[Tuple[str, Dict[str, Any], bool, Optional[str]]] = []
     if not isinstance(schema, dict):
         return results
 
@@ -151,20 +157,20 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
         for p_name, p_schema in props.items():
             if isinstance(p_schema, dict):
                 current_path = f"{path_prefix}.{p_name}" if path_prefix else str(p_name)
-                results.append((current_path, p_schema, False))
+                results.append((current_path, p_schema, True, str(p_name)))
                 # Recurse into property schema (handles nested properties, items, composition, etc.)
                 results.extend(_extract_schema_properties(p_schema, path_prefix=current_path))
 
     items = schema.get("items")
     if isinstance(items, dict):
         item_path = f"{path_prefix}[]" if path_prefix else "[]"
-        results.append((item_path, items, False))
+        results.append((item_path, items, False, None))
         results.extend(_extract_schema_properties(items, path_prefix=item_path))
     elif isinstance(items, list):
         for idx, item_schema in enumerate(items):
             if isinstance(item_schema, dict):
                 item_path = f"{path_prefix}[{idx}]" if path_prefix else f"[{idx}]"
-                results.append((item_path, item_schema, False))
+                results.append((item_path, item_schema, False, None))
                 results.extend(_extract_schema_properties(item_schema, path_prefix=item_path))
 
     prefix_items = schema.get("prefixItems")
@@ -172,13 +178,13 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
         for idx, item_schema in enumerate(prefix_items):
             if isinstance(item_schema, dict):
                 item_path = f"{path_prefix}[{idx}]" if path_prefix else f"[{idx}]"
-                results.append((item_path, item_schema, False))
+                results.append((item_path, item_schema, False, None))
                 results.extend(_extract_schema_properties(item_schema, path_prefix=item_path))
 
     add_props = schema.get("additionalProperties")
     if isinstance(add_props, dict):
         add_path = f"{path_prefix}.*" if path_prefix else ".*"
-        results.append((add_path, add_props, False))
+        results.append((add_path, add_props, False, None))
         results.extend(_extract_schema_properties(add_props, path_prefix=add_path))
 
     for comp_key in ("allOf", "anyOf", "oneOf"):
@@ -187,7 +193,7 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
             for idx, comp_schema in enumerate(comp_list):
                 if isinstance(comp_schema, dict):
                     comp_path = f"{path_prefix}.{comp_key}[{idx}]" if path_prefix else f"{comp_key}[{idx}]"
-                    results.append((comp_path, comp_schema, False))
+                    results.append((comp_path, comp_schema, False, None))
                     results.extend(_extract_schema_properties(comp_schema, path_prefix=comp_path))
 
     for defs_key in ("$defs", "definitions"):
@@ -196,7 +202,7 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
             for def_name, def_schema in defs.items():
                 if isinstance(def_schema, dict):
                     def_path = f"{path_prefix}.{defs_key}.{def_name}" if path_prefix else f"{defs_key}.{def_name}"
-                    results.append((def_path, def_schema, True))
+                    results.append((def_path, def_schema, False, None))
                     results.extend(_extract_schema_properties(def_schema, path_prefix=def_path))
 
     return results
@@ -216,7 +222,7 @@ def check_description_injection(tools: List[Dict[str, Any]]) -> List[AuditFindin
             if "description" in schema and isinstance(schema["description"], str):
                 fields_to_check.append(("inputSchema description", schema["description"]))
             extracted = _extract_schema_properties(schema)
-            for p_path, p_schema, _ in extracted:
+            for p_path, p_schema, _, _ in extracted:
                 if "description" in p_schema and isinstance(p_schema["description"], str):
                     fields_to_check.append(
                         (f"property '{p_path}' description", p_schema["description"])
@@ -252,15 +258,8 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
             continue
 
         extracted = _extract_schema_properties(schema)
-        for p_path, p_schema, is_def_node in extracted:
-            parts = p_path.split(".")
-            leaf_name = parts[-1]
-            is_synthetic_path = (
-                leaf_name.endswith("]")
-                or leaf_name == "*"
-                or is_def_node
-            )
-            if not is_synthetic_path and is_sensitive_property_name(leaf_name):
+        for p_path, p_schema, is_property, raw_name in extracted:
+            if is_property and raw_name and is_sensitive_property_name(raw_name):
                 findings.append(
                     AuditFinding(
                         check="sensitive-field-exposure",

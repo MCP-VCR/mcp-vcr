@@ -502,10 +502,24 @@ def test_check_structured_default_values_containing_literal_secrets():
     assert any("array_config" in m for m in high_msgs)
 
 
+def test_check_punctuation_and_bracketed_sensitive_property_names():
+    tools = [
+        {
+            "name": "punctuation_tool",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "api_key]": {"type": "string"},
+                    "api:key": {"type": "string"},
+                    "user-credential.token": {"type": "string"},
+                },
+            },
+        }
+    ]
 
-
-
-
-
-
+    sec_findings = check_sensitive_field_exposure(tools)
+    sec_msgs = [f.message for f in sec_findings]
+    assert any("'api_key]'" in m for m in sec_msgs)
+    assert any("'api:key'" in m for m in sec_msgs)
+    assert any("'user-credential.token'" in m for m in sec_msgs)
 
