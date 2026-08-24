@@ -160,6 +160,17 @@ def _extract_schema_properties(
                 results.append((current_path, p_schema, True, str(p_name)))
                 # Recurse into property schema (handles nested properties, items, composition, etc.)
                 results.extend(_extract_schema_properties(p_schema, path_prefix=current_path))
+            elif p_schema is True:
+                current_path = f"{path_prefix}.{p_name}" if path_prefix else str(p_name)
+                results.append((current_path, {}, True, str(p_name)))
+
+    pattern_props = schema.get("patternProperties")
+    if isinstance(pattern_props, dict):
+        for pat_name, pat_schema in pattern_props.items():
+            if isinstance(pat_schema, dict):
+                pat_path = f"{path_prefix}.{pat_name}" if path_prefix else str(pat_name)
+                results.append((pat_path, pat_schema, False, None))
+                results.extend(_extract_schema_properties(pat_schema, path_prefix=pat_path))
 
     items = schema.get("items")
     if isinstance(items, dict):
