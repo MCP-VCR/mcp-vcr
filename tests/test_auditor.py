@@ -377,6 +377,37 @@ def test_check_definition_node_with_sensitive_name_does_not_emit_medium_finding(
     assert any("'$defs.credentials.password'" in m for m in sec_messages)
 
 
+def test_check_ordinary_definitions_or_defs_properties_emit_medium_finding():
+    tools = [
+        {
+            "name": "prop_test_tool",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "definitions": {
+                        "type": "object",
+                        "properties": {
+                            "credentials": {"type": "string"},
+                        },
+                    },
+                    "$defs": {
+                        "type": "object",
+                        "properties": {
+                            "credentials": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        }
+    ]
+
+    sec_findings = check_sensitive_field_exposure(tools)
+    sec_messages = [f.message for f in sec_findings]
+    assert any("'definitions.credentials'" in m for m in sec_messages)
+    assert any("'$defs.credentials'" in m for m in sec_messages)
+
+
+
 
 
 
