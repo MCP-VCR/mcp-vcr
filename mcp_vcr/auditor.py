@@ -126,6 +126,20 @@ class AuditResult:
     exit_code: int
 
 
+def _extract_string_values(val: Any) -> List[str]:
+    """Recursively extract all string values from primitive or structured (dict/list) data."""
+    strings: List[str] = []
+    if isinstance(val, str):
+        strings.append(val)
+    elif isinstance(val, dict):
+        for v in val.values():
+            strings.extend(_extract_string_values(v))
+    elif isinstance(val, (list, tuple)):
+        for item in val:
+            strings.extend(_extract_string_values(item))
+    return strings
+
+
 def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") -> List[Tuple[str, Dict[str, Any], bool]]:
     """Recursively traverse a JSON Schema dictionary and return (property_path, prop_schema, is_def_node) tuples."""
     results: List[Tuple[str, Dict[str, Any], bool]] = []
@@ -146,6 +160,20 @@ def _extract_schema_properties(schema: Dict[str, Any], path_prefix: str = "") ->
         item_path = f"{path_prefix}[]" if path_prefix else "[]"
         results.append((item_path, items, False))
         results.extend(_extract_schema_properties(items, path_prefix=item_path))
+    elif isinstance(items, list):
+        for idx, item_schema in enumerate(items):
+            if isinstance(item_schema, dict):
+                item_path = f"{path_prefix}[{idx}]" if path_prefix else f"[{idx}]"
+                results.append((item_path, item_schema, False))
+                results.extend(_extract_schema_properties(item_schema, path_prefix=item_path))
+
+    prefix_items = schema.get("prefixItems")
+    if isinstance(prefix_items, list):
+        for idx, item_schema in enumerate(prefix_items):
+            if isinstance(item_schema, dict):
+                item_path = f"{path_prefix}[{idx}]" if path_prefix else f"[{idx}]"
+                results.append((item_path, item_schema, False))
+                results.extend(_extract_schema_properties(item_schema, path_prefix=item_path))
 
     add_props = schema.get("additionalProperties")
     if isinstance(add_props, dict):
@@ -228,9 +256,8 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
             parts = p_path.split(".")
             leaf_name = parts[-1]
             is_synthetic_path = (
-                leaf_name.endswith("[]")
+                leaf_name.endswith("]")
                 or leaf_name == "*"
-                or any(k in leaf_name for k in ("allOf[", "anyOf[", "oneOf["))
                 or is_def_node
             )
             if not is_synthetic_path and is_sensitive_property_name(leaf_name):
@@ -248,8 +275,9 @@ def check_sensitive_field_exposure(tools: List[Dict[str, Any]]) -> List[AuditFin
 
             # Check defaults and descriptions for literal secrets
             values_to_check = []
-            if "default" in p_schema and isinstance(p_schema["default"], str):
-                values_to_check.append(("default value", p_schema["default"]))
+            if "default" in p_schema:
+                for def_val in _extract_string_values(p_schema["default"]):
+                    values_to_check.append(("default value", def_val))
             if "description" in p_schema and isinstance(p_schema["description"], str):
                 values_to_check.append(("description", p_schema["description"]))
 
