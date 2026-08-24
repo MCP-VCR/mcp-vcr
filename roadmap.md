@@ -19,34 +19,28 @@ All architectural decisions, integrations, and extensions are governed by a sing
                                  │
                      ┌───────────┴───────────┐
                      ▼                       ▼
-             Phase 1 (Shipped)       Phase 1 (Shipped)
-          Transport Abstraction     Core Developer Experience
-          StdioTransport · SSE      Pytest plugin · GH Action
-          Timing-Faithful Replay    Config expansion · NDJSON
+             Phase 1 (Shipped)       Phase 2 (Shipped)
+          Transport Abstraction     Adoption Accelerators
+          StdioTransport · SSE      mcp-vcr generate · --json CLI
+          Timing-Faithful Replay    Community test collections
+          Core Developer Exp.       mcp-vcr test command
                      │                       │
                      └───────────┬───────────┘
                                  ▼
-                         Phase 2 (Active)
-                      Adoption Accelerators
-                   mcp-vcr generate · --json CLI
-                   Community test collections
-                   mcp-vcr test command
-                                │
-                                ▼
-                         Phase 3 (Next)
+                         Phase 3 (Active)
                       Security & Resilience
-                  Passive security audit (narrow)
-                  Fuzz testing · Active audit
-                  Structured test reports
-                                │
-                                ▼
+                 Passive security audit (Shipped)
+                 Fuzz testing · Active audit
+                 Structured test reports
+                                 │
+                                 ▼
                          Phase 4 (Demand-Gated)
                       Platform & Performance
                    Inspector integration · Compat matrix
                    Parallel verification · Incremental updates
                    Plugin system · Rust transport core
-                                │
-                                ▼
+                                 │
+                                 ▼
                       Deferred Indefinitely
                    VS Code extension
                    Cross-language replay (Python→TS)
@@ -54,46 +48,39 @@ All architectural decisions, integrations, and extensions are governed by a sing
 
 ---
 
-## Phase 2: Adoption Accelerators (Active)
+## Phase 2: Adoption Accelerators (Shipped)
 
 Focus: Make it trivially easy for new users to try mcp-vcr on their own server, and make CLI output composable for CI pipelines.
 
-### 1. Test Generation (`mcp-vcr generate`)
+### 1. Test Generation (`mcp-vcr generate`) — Shipped
 *   **Objective**: Auto-discover all tools from a running server and generate stub snapshots.
 *   **Mechanism**: `mcp-vcr generate --server "python server.py"` launches the server, sends `initialize` + `tools/list`, generates a skeleton transcript with one `tools/call` per discovered tool (with placeholder args from `inputSchema`), and writes it as a golden snapshot.
-*   **Why it's pulled forward**: This is the single highest-leverage adoption feature — it lets someone try mcp-vcr on their own server in under a minute instead of hand-writing a first transcript. It only needs `StdioTransport`/`SseTransport` + a `tools/list` call, not the full config/plugin system.
-*   **Dependencies**: Transport Abstraction (Phase 1, Task 1).
 
-### 2. Structured JSON Output (`--json` flag)
+### 2. Structured JSON Output (`--json` flag) — Shipped
 *   **Objective**: Machine-readable output for every CLI command.
-*   **Mechanism**: Add `--json` flag to `verify`, `record`, `replay`, `diff`, `check`, `list`, `inspect`. Outputs structured JSON to stdout, human text to stderr. Independent of the "Structured Test Reports" feature (HTML/JSON report files) — this is a CLI contract, not a report generator.
-*   **Why it's early**: Retrofitting `--json` after CLI output format is established elsewhere is more painful. The GitHub Action and any future audit tooling need composable output with `jq`/other CI steps.
-*   **Dependencies**: None (can start immediately, parallel with Phase 1).
+*   **Mechanism**: Added `--json` flag to `verify`, `record`, `replay`, `diff`, `check`, `list`, `inspect`, `generate`, `test`, `audit`. Outputs structured JSON to stdout, human text to stderr.
 
-### 3. Community Test Collections
-*   **Objective**: Curate YAML test definitions for popular MCP servers (filesystem, memory, time, github, chrome-devtools).
-*   **Mechanism**: `tests/community/` directory with pre-built transcripts and a manifest. `mcp-vcr test --suite filesystem -- npx @modelcontextprotocol/server-filesystem /tmp` runs the suite.
-*   **Dependencies**: Test Generation (makes it easy to create these).
+### 3. Community Test Collections — Shipped
+*   **Objective**: Curate YAML test definitions for popular MCP servers (filesystem, memory, time).
+*   **Mechanism**: `mcp_vcr/community/` directory with pre-built transcripts and a manifest.
 
-### 4. `mcp-vcr test` Command
+### 4. `mcp-vcr test` Command — Shipped
 *   **Objective**: Run predefined test suites against any server with pass/fail reporting.
 *   **Mechanism**: Reads a test suite manifest (YAML), runs each transcript as a replay+verify cycle, collects results, outputs pass/fail summary. Uses `--json` for CI integration.
-*   **Dependencies**: Community Test Collections, `--json` flag.
 
 ---
 
-## Phase 3: Security & Resilience
+## Phase 3: Security & Resilience (Active)
 
-Focus: Differentiate mcp-vcr as a security-conscious testing tool. Start narrow, expand with demand.
+Focus: Differentiate mcp-vcr as a security-conscious testing tool.
 
-### 1. Security Audit Suite — Passive Mode (Priority)
-*   **Objective**: Detect prompt injection risks, overly-permissive tool descriptions, and suspicious capability declarations without sending adversarial payloads.
-*   **Mechanism**: `mcp-vcr audit --passive "python server.py"` launches the server, inspects `initialize` result and `tools/list` response, and runs 3-4 specific checks:
-    *   **Tool description injection**: Detect descriptions containing instruction-like text ("ignore previous instructions", markdown injection, hidden unicode).
-    *   **Overly-broad capabilities**: Flag servers declaring capabilities (e.g., `resources.subscribe` or `tools.listChanged`) where the capability behavior check reveals it is advertised but not actually integrated or implemented in the message workflow.
-    *   **Schema permissiveness**: Flag tools with no `inputSchema`, or with `additionalProperties: true` on all objects.
-    *   **Sensitive field exposure**: Check if tool outputs contain patterns matching known secret formats (API keys, tokens).
-*   **Why it's the strongest differentiator**: Passive mode (tool description analysis for prompt-injection-prone descriptions) is a genuinely underserved niche in the MCP tooling space right now. A narrow first version (3-4 checks) ships fast and gets noticed by maintainers.
+### 1. Security Audit Suite — Passive Mode (`mcp-vcr audit --passive`) — Shipped
+*   **Objective**: Detect prompt injection risks, sensitive field exposures in schemas, and report advertised capability declarations without sending adversarial payloads.
+*   **Mechanism**: `mcp-vcr audit --passive -- python server.py` launches the server, inspects `initialize` result and `tools/list` response, and runs static pattern matching and field analysis:
+    *   **Tool description injection**: Detect descriptions containing instruction-override phrases, HTML/script injection, deceptive markdown links, or hidden unicode control characters.
+    *   **Sensitive field exposure**: Detect input schema property names indicating secret inputs (`api_key`, `token`, `password`, `credential`, `secret`, `bearer`) while excluding benign metadata terms (`credential_count`, `token_type`), and detect unredacted literal secret tokens in default values or descriptions.
+    *   **Capability declarations**: Report advertised server capabilities (`resources.subscribe`, `tools.listChanged`, `logging`) as informational findings.
+*   **CLI Contract**: `--json` produces structured JSON envelopes with both filtered `summary` and unfiltered `raw_summary`. `--severity` filters reporting and controls the exit code.
 *   **Dependencies**: Transport Abstraction (Phase 1).
 
 ### 2. Fuzz Testing Mode (`mcp-vcr fuzz`)
