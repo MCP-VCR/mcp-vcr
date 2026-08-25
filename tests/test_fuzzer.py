@@ -97,10 +97,6 @@ class MockFuzzTransport(Transport):
             self._running = False
             raise ConnectionError("Bootstrap server crash")
 
-        if self.crash_on_fuzz_write and self._in_fuzz_phase:
-            self._running = False
-            raise ConnectionError("Simulated pipe write crash")
-
         # Process standard handshake messages
         try:
             req_obj = json.loads(data.decode("utf-8").strip())
@@ -120,6 +116,7 @@ class MockFuzzTransport(Transport):
                     await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
                     return
                 elif method == "notifications/initialized":
+                    self._in_fuzz_phase = True
                     return
                 elif method == "tools/list":
                     resp = {
@@ -139,9 +136,17 @@ class MockFuzzTransport(Transport):
                         },
                     }
                     await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
+                    self._in_fuzz_phase = True
                     return
         except Exception:
             pass
+
+        # We are in fuzz phase
+        self._in_fuzz_phase = True
+
+        if self.crash_on_fuzz_write:
+            self._running = False
+            raise ConnectionError("Simulated pipe write crash")
 
         # Handle fuzz response phase
         if self.timeout_on_fuzz_read:
@@ -357,12 +362,28 @@ async def test_max_restarts_aborts(mock_snapshot_path):
                 return None
             return await super().read_server_message()
 
-    engine = FuzzEngine(max_restarts=1, max_mutations=5)
+    engine = FuzzEngine(timeout_ms=100, max_restarts=1, max_mutations=5)
     res = await engine.run_fuzz(mock_snapshot_path, transport_factory=lambda: CrashingTransport())
 
     assert res.aborted is True
     assert res.exit_code == 2
     assert "restart budget" in (res.abort_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_fuzz_pipe_write_crash_triggers_restart(mock_snapshot_path):
+    t1 = MockFuzzTransport(crash_on_fuzz_write=True, captured_stderr="Pipe error")
+    t2 = MockFuzzTransport(fuzz_responses=[
+        {"jsonrpc": "2.0", "id": 10, "error": {"code": -32602, "message": "Invalid params"}}
+    ])
+    transports = [t1, t2]
+
+    engine = FuzzEngine(max_mutations=2)
+    res = await engine.run_fuzz(mock_snapshot_path, transport_factory=lambda: transports.pop(0))
+
+    assert res.results[0].verdict == "crash"
+    assert "Pipe error" in (res.results[0].detail or "")
+    assert res.results[1].verdict == "pass"
 
 
 @pytest.mark.asyncio

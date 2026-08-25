@@ -1778,9 +1778,9 @@ async def run_fuzz(
             return StdioTransport(args, read_stdin=False, capture_stderr=True)
 
     if not json_output:
-        from .cli import _sanitize_url
         server_display = _sanitize_url(sse_url) if transport == "sse" else " ".join(args)
         click.secho("Fuzz Testing — mcp-vcr fuzz", fg="cyan", bold=True, err=True)
+        click.secho(f"Fuzzing server: {server_display}", fg="cyan", err=True)
         click.secho(f"Snapshot: {snapshot_path.name}", fg="cyan", err=True)
 
     from .fuzzer import FuzzEngine

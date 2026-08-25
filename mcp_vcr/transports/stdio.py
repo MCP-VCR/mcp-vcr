@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import threading
+from collections import deque
 from typing import Any, List, Optional
 from .base import Transport
 
@@ -196,10 +197,10 @@ class StdioTransport(Transport):
         self.client_writer: Optional[StreamWriterWrapper] = None
         self.stderr_writer: Optional[StreamWriterWrapper] = None
         self._stderr_task: Optional[asyncio.Task] = None
-        self._stderr_lines: List[str] = []
+        self._stderr_lines: deque[str] = deque(maxlen=200)
 
     def drain_captured_stderr(self) -> str:
-        """Return captured stderr lines joined by newline and clear internal buffer."""
+        """Return captured stderr lines and clear internal buffer."""
         captured = "".join(self._stderr_lines)
         self._stderr_lines.clear()
         return captured
@@ -312,8 +313,7 @@ class StdioTransport(Transport):
                 if not line:
                     break
                 if self.capture_stderr:
-                    if len(self._stderr_lines) < 200:
-                        self._stderr_lines.append(line.decode("utf-8", errors="replace"))
+                    self._stderr_lines.append(line.decode("utf-8", errors="replace"))
                 self.stderr_writer.write(line)
                 await self.stderr_writer.drain()
             except asyncio.CancelledError:

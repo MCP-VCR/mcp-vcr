@@ -1,8 +1,12 @@
 import json
 import sys
+from pathlib import Path
 import pytest
 from click.testing import CliRunner
 from mcp_vcr.cli import main
+
+TOY_BENIGN_PATH = str(Path(__file__).parent / "integration" / "toy_server_benign_jargon.py")
+TOY_FRAGILE_PATH = str(Path(__file__).parent / "integration" / "toy_server_fragile.py")
 
 
 @pytest.fixture
@@ -53,7 +57,7 @@ def test_fuzz_json_output_envelope(cli_snapshot):
         "--strategy", "field_removal",
         "--strategy", "type_confusion",
         "--max-mutations", "2",
-        "--", sys.executable, "tests/integration/toy_server_benign_jargon.py"
+        "--", sys.executable, TOY_BENIGN_PATH
     ]
     result = runner.invoke(main, cmd)
     assert result.exit_code == 0
@@ -74,7 +78,7 @@ def test_fuzz_with_strategy_filter(cli_snapshot):
         str(cli_snapshot),
         "--json",
         "--strategy", "field_removal",
-        "--", sys.executable, "tests/integration/toy_server_benign_jargon.py"
+        "--", sys.executable, TOY_BENIGN_PATH
     ]
     result = runner.invoke(main, cmd)
     assert result.exit_code == 0
@@ -91,15 +95,15 @@ def test_fuzz_human_output_format(cli_snapshot):
         str(cli_snapshot),
         "--strategy", "field_removal",
         "--max-mutations", "2",
-        "--", sys.executable, "tests/integration/toy_server_benign_jargon.py"
+        "--", sys.executable, TOY_BENIGN_PATH
     ]
     result = runner.invoke(main, cmd)
-    stderr_out = result.stderr
+    output_text = result.output
 
-    assert "Fuzz Testing — mcp-vcr fuzz" in stderr_out
-    assert "Snapshot:" in stderr_out
-    assert "━━ Results ━━" in stderr_out
-    assert "━━ Summary ━━" in stderr_out
+    assert "Fuzz Testing — mcp-vcr fuzz" in output_text
+    assert "Snapshot:" in output_text
+    assert "━━ Results ━━" in output_text
+    assert "━━ Summary ━━" in output_text
 
 
 def test_fuzz_seed_flag_random(cli_snapshot):
@@ -111,7 +115,7 @@ def test_fuzz_seed_flag_random(cli_snapshot):
         "--strategy", "type_confusion",
         "--max-mutations", "2",
         "--json",
-        "--", sys.executable, "tests/integration/toy_server_benign_jargon.py"
+        "--", sys.executable, TOY_BENIGN_PATH
     ]
     result = runner.invoke(main, cmd)
     assert result.exit_code == 0
@@ -129,7 +133,7 @@ def test_fuzz_seed_flag_integer(cli_snapshot):
         "--strategy", "type_confusion",
         "--max-mutations", "2",
         "--json",
-        "--", sys.executable, "tests/integration/toy_server_benign_jargon.py"
+        "--", sys.executable, TOY_BENIGN_PATH
     ]
     result = runner.invoke(main, cmd)
     assert result.exit_code == 0
@@ -146,14 +150,10 @@ def test_fuzz_fragile_server_detects_issues(cli_snapshot):
         "--timeout", "500",
         "--max-mutations", "5",
         "--json",
-        "--", sys.executable, "tests/integration/toy_server_fragile.py"
+        "--", sys.executable, TOY_FRAGILE_PATH
     ]
     result = runner.invoke(main, cmd)
     assert result.exit_code != 0
 
     envelope = json.loads(result.stdout)
     assert envelope["status"] in ("fail", "aborted")
-
-
-
-
