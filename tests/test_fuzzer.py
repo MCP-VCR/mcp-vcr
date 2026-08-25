@@ -22,34 +22,38 @@ class MockFuzzTransport(Transport):
         captured_stderr: str = "",
         fail_bootstrap_attempts: int = 0,
     ):
-        self.handshake_responses = handshake_responses or [
-            # initialize response (id=1)
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "serverInfo": {"name": "mock-server", "version": "1.0"},
+        self.handshake_responses = (
+            handshake_responses
+            if handshake_responses is not None
+            else [
+                # initialize response (id=1)
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "serverInfo": {"name": "mock-server", "version": "1.0"},
+                    },
                 },
-            },
-            # tools/list response (id=2)
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "mock_tool",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {"arg": {"type": "string"}},
-                                "required": ["arg"],
-                            },
-                        }
-                    ]
+                # tools/list response (id=2)
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "mock_tool",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {"arg": {"type": "string"}},
+                                    "required": ["arg"],
+                                },
+                            }
+                        ]
+                    },
                 },
-            },
-        ]
+            ]
+        )
         self.fuzz_responses = fuzz_responses or []
         self.crash_on_fuzz_write = crash_on_fuzz_write
         self.timeout_on_fuzz_read = timeout_on_fuzz_read
@@ -105,36 +109,22 @@ class MockFuzzTransport(Transport):
                 req_id = req_obj.get("id")
 
                 if method == "initialize":
-                    resp = {
-                        "jsonrpc": "2.0",
-                        "id": req_id or 1,
-                        "result": {
-                            "protocolVersion": "2024-11-05",
-                            "serverInfo": {"name": "mock-server", "version": "1.0"},
-                        },
-                    }
-                    await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
+                    if self._handshake_idx < len(self.handshake_responses):
+                        resp = dict(self.handshake_responses[self._handshake_idx])
+                        self._handshake_idx += 1
+                        if req_id is not None and "id" in resp:
+                            resp["id"] = req_id
+                        await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
                     return
                 elif method == "notifications/initialized":
                     return
                 elif method == "tools/list":
-                    resp = {
-                        "jsonrpc": "2.0",
-                        "id": req_id or 2,
-                        "result": {
-                            "tools": [
-                                {
-                                    "name": "mock_tool",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {"arg": {"type": "string"}},
-                                        "required": ["arg"],
-                                    },
-                                }
-                            ]
-                        },
-                    }
-                    await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
+                    if self._handshake_idx < len(self.handshake_responses):
+                        resp = dict(self.handshake_responses[self._handshake_idx])
+                        self._handshake_idx += 1
+                        if req_id is not None and "id" in resp:
+                            resp["id"] = req_id
+                        await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
                     return
         except Exception:
             pass
@@ -515,3 +505,42 @@ async def test_bootstrap_succeeds_after_transient_failure(mock_snapshot_path):
 
     assert res.total_mutations == 1
     assert res.results[0].verdict == "pass"
+
+
+@pytest.mark.asyncio
+async def test_custom_handshake_responses_in_mock_transport(mock_snapshot_path):
+    custom_init_resp = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "serverInfo": {"name": "custom-server", "version": "9.9.9"},
+        },
+    }
+    custom_tools_resp = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "tools": [
+                {
+                    "name": "custom_tool",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"param": {"type": "string"}},
+                        "required": ["param"],
+                    },
+                }
+            ]
+        },
+    }
+    transport = MockFuzzTransport(
+        handshake_responses=[custom_init_resp, custom_tools_resp],
+        fuzz_responses=[{"jsonrpc": "2.0", "id": 10, "error": {"code": -32602, "message": "err"}}],
+    )
+
+    engine = FuzzEngine(max_mutations=1)
+    res = await engine.run_fuzz(mock_snapshot_path, transport_factory=lambda: transport)
+
+    assert res.server_info.get("name") == "custom-server"
+    assert res.server_info.get("version") == "9.9.9"
+
