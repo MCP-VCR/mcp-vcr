@@ -116,7 +116,6 @@ class MockFuzzTransport(Transport):
                     await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
                     return
                 elif method == "notifications/initialized":
-                    self._in_fuzz_phase = True
                     return
                 elif method == "tools/list":
                     resp = {
@@ -136,7 +135,6 @@ class MockFuzzTransport(Transport):
                         },
                     }
                     await self._read_queue.put(json.dumps(resp).encode("utf-8") + b"\n")
-                    self._in_fuzz_phase = True
                     return
         except Exception:
             pass
