@@ -31,6 +31,7 @@ It sits cleanly between an MCP client (such as Claude Desktop, Cursor, Windsurf,
 *   **Layered Diff Engines**: Compare schema structures (`--structural`), semantics (`--semantic`), or exact matching (`--strict`).
 *   **Pytest Integration**: Build automated test suites with the first-party `pytest-mcp-vcr` plugin.
 *   **CI-Native Checking**: Verify server functionality in CI with zero shell injection risks using our official composite GitHub Action.
+*   **Fuzz Testing**: Automatically mutate recorded snapshots (field removal, type confusion, boundary values, truncated payloads) to stress-test server error handling and crash resistance.
 
 ---
 
@@ -43,6 +44,7 @@ It sits cleanly between an MCP client (such as Claude Desktop, Cursor, Windsurf,
 | **Hard-to-Reproduce Bugs** | Capture a failing sequence from Claude Desktop and replay it locally in one command. |
 | **Silent API Schema Drift** | Strict structural diffs flag added/removed tools, arguments, or changed types immediately. |
 | **Credential Leaks in Git** | Built-in redaction keeps secrets and private absolute filesystem paths out of your codebase. |
+| **Silent Crash Bugs** | Fuzz testing catches unhandled exceptions, hangs, and protocol violations before they hit production. |
 
 ---
 
@@ -132,6 +134,25 @@ mcp-vcr test --suite time -- uvx --with 'mcp>=1.23,<2' mcp-server-time
 
 See [Community Test Collections Guide](docs/community-tests.md) for full details.
 
+### 7. Fuzz Test Your Server
+Probe your server's error handling by replaying golden snapshots with controlled mutations:
+
+```bash
+# Fuzz all mutation strategies against a snapshot
+mcp-vcr fuzz snapshots/my_server_golden.yaml -- python my_server.py
+
+# Only run specific strategies
+mcp-vcr fuzz --strategy field_removal --strategy type_confusion \
+  snapshots/my_server_golden.yaml -- python my_server.py
+
+# Limit total run time and restart budget
+mcp-vcr fuzz --wall-clock-limit 60 --max-restarts 5 \
+  snapshots/my_server_golden.yaml -- python my_server.py
+
+# Reproducible shuffle for CI
+mcp-vcr fuzz --seed 42 --json snapshots/my_server_golden.yaml -- python my_server.py
+```
+
 ---
 
 ## Claude Desktop Configuration
@@ -186,13 +207,10 @@ redact:
 
 We are laser-focused on keeping our core stable and backward-compatible. The following major capabilities are scheduled for the next phases:
 
-### 1. Fuzz Testing Mode
-Add `mcp-vcr fuzz` to replay recorded snapshots with randomized mutations (truncated payloads, type confusion, missing required schema fields, and boundary values) to audit server error handling and crash resistance.
-
-### 2. MCP Inspector Integration
+### 1. MCP Inspector Integration
 Coordinating with the MCP community to support loading `mcp-vcr` transcripts directly into the official MCP Inspector web interface for timeline visualization, message inspection, and interactive debugging.
 
-### 3. Compatibility Matrix Report
+### 2. Compatibility Matrix Report
 Record and diff identical session exchanges across major MCP client runtimes (Claude Desktop, Cursor, Windsurf, etc.) to generate a public compatibility matrix, letting authors prove their servers work flawlessly across the client ecosystem.
 
 ---

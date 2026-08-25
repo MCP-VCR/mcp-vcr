@@ -40,6 +40,8 @@ from .auditor import (
     is_sensitive_property_name,
     normalize_property_name,
 )
+from .mutators import Mutation, MutationSet, generate_mutations
+from .fuzzer import FuzzEngine, FuzzResult, FuzzCaseResult
 
 __all__ = [
     "Transcript",
@@ -80,6 +82,13 @@ __all__ = [
     "AuditResult",
     "is_sensitive_property_name",
     "normalize_property_name",
+    "Mutation",
+    "MutationSet",
+    "generate_mutations",
+    "FuzzEngine",
+    "FuzzResult",
+    "FuzzCaseResult",
 ]
+
 
 
