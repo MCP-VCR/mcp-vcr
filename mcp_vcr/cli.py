@@ -8,7 +8,7 @@ import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import click
@@ -1750,8 +1750,241 @@ def audit(passive, server, transport, sse_url, sse_header, timeout, severity, js
     sys.exit(exit_code)
 
 
+async def run_fuzz(
+    snapshot_path: Path,
+    args: List[str],
+    transport: str,
+    sse_url: Optional[str],
+    headers: dict,
+    timeout: int,
+    max_mutations: Optional[int],
+    max_payload_bytes: Optional[int],
+    wall_clock_limit: Optional[int],
+    max_restarts: int,
+    strategies: Optional[Set[str]],
+    seed: Optional[int],
+    raw_seed_str: Optional[str],
+    json_output: bool,
+) -> int:
+    def make_transport():
+        if transport == "sse":
+            try:
+                from .transports import SseTransport
+            except ImportError:
+                raise RuntimeError("SseTransport is not available. Please install the sse extra: pip install mcp-vcr[sse]")
+            return SseTransport(sse_url=sse_url, headers=headers)
+        else:
+            from .transports import StdioTransport
+            return StdioTransport(args, read_stdin=False, capture_stderr=True)
+
+    if not json_output:
+        from .cli import _sanitize_url
+        server_display = _sanitize_url(sse_url) if transport == "sse" else " ".join(args)
+        click.secho("Fuzz Testing — mcp-vcr fuzz", fg="cyan", bold=True, err=True)
+        click.secho(f"Snapshot: {snapshot_path.name}", fg="cyan", err=True)
+
+    from .fuzzer import FuzzEngine
+    engine = FuzzEngine(
+        timeout_ms=timeout,
+        max_mutations=max_mutations,
+        max_payload_bytes=max_payload_bytes,
+        wall_clock_limit_s=wall_clock_limit,
+        max_restarts=max_restarts,
+        strategies=strategies,
+        seed=seed,
+    )
+
+    try:
+        res = await engine.run_fuzz(snapshot_path, transport_factory=make_transport)
+    except Exception as e:
+        err_msg = f"Fuzz testing failed: {e}"
+        if json_output:
+            emit_json(error_envelope("fuzz", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        return 1
+
+    if json_output:
+        emit_json({
+            "status": "ok" if res.exit_code == 0 else ("aborted" if res.aborted else "fail"),
+            "command": "fuzz",
+            "source_snapshot": res.source_snapshot,
+            "server_info": res.server_info,
+            "protocol_version": res.protocol_version,
+            "total_mutations": res.total_mutations,
+            "results": [
+                {
+                    "mutation": {
+                        "name": r.mutation.name,
+                        "strategy": r.mutation.strategy,
+                        "source_message_index": r.mutation.source_message_index,
+                        "source_method": r.mutation.source_method,
+                    },
+                    "verdict": r.verdict,
+                    "response_payload": r.response_payload,
+                    "error_code": r.error_code,
+                    "error_message": r.error_message,
+                    "elapsed_ms": r.elapsed_ms,
+                    "detail": r.detail,
+                }
+                for r in res.results
+            ],
+            "resource_limits": res.resource_limits,
+            "summary": res.summary,
+            "aborted": res.aborted,
+            "abort_reason": res.abort_reason,
+            "exit_code": res.exit_code,
+        })
+    else:
+        s_info = res.server_info
+        s_name = s_info.get("name", "server") if isinstance(s_info, dict) else "server"
+        s_ver = s_info.get("version", "") if isinstance(s_info, dict) else ""
+        s_str = f"{s_name} v{s_ver}".strip() if s_ver else s_name
+
+        click.echo(f"Server:     {s_str} (protocol: {res.protocol_version})", err=True)
+        strat_str = ", ".join(sorted(strategies)) if strategies else "field_removal, type_confusion, boundary, truncated"
+        click.echo(f"Strategies: {strat_str}", err=True)
+        if raw_seed_str:
+            click.echo(f"Seed:       {raw_seed_str}", err=True)
+
+        click.secho("\n━━ Results ━━\n", fg="cyan", bold=True, err=True)
+        if not res.results:
+            click.secho("  ✓ No mutations run.", fg="yellow", err=True)
+        else:
+            for r in res.results:
+                v = r.verdict
+                if v == "pass":
+                    v_str = click.style("  PASS   ", fg="green", bold=True)
+                elif v == "skipped":
+                    v_str = click.style("  SKIPPED", fg="yellow", bold=True)
+                elif v == "timeout":
+                    v_str = click.style("  TIMEOUT", fg="yellow", bold=True)
+                else:
+                    v_str = click.style(f"  {v.upper():<7}", fg="red", bold=True)
+
+                msg = f"{v_str} [{r.mutation.name}] {r.mutation.source_method}"
+                click.echo(msg, err=True)
+                if r.error_code is not None and r.error_message is not None:
+                    click.echo(f"          Server returned error {r.error_code}: {r.error_message} ({r.elapsed_ms}ms)", err=True)
+                elif r.detail:
+                    click.echo(f"          {r.detail} ({r.elapsed_ms}ms)", err=True)
+                else:
+                    click.echo(f"          ({r.elapsed_ms}ms)", err=True)
+
+        click.secho("\n━━ Summary ━━", fg="cyan", bold=True, err=True)
+        sum_dict = res.summary
+        sum_str = f"{res.total_mutations} mutations | {sum_dict['pass']} pass, {sum_dict['fail']} fail, {sum_dict['crash']} crash, {sum_dict['timeout']} timeout, {sum_dict['skipped']} skipped"
+        if sum_dict.get("protocol_error", 0) > 0:
+            sum_str += f", {sum_dict['protocol_error']} protocol_error"
+
+        res_color = "green" if res.exit_code == 0 else "red"
+        click.secho(f"  {sum_str}", fg=res_color, err=True)
+
+        if res.aborted:
+            click.secho(f"  Aborted: {res.abort_reason}", fg="yellow", err=True)
+
+        status_msg = "Clean run" if res.exit_code == 0 else ("Run aborted" if res.exit_code == 2 else "Fuzz issues detected")
+        click.secho(f"  Exit code: {res.exit_code} ({status_msg})\n", fg=res_color, bold=True, err=True)
+
+    return res.exit_code
+
+
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.argument('snapshot', type=click.Path(exists=True, path_type=Path), required=True)
+@click.option('--server', type=str, default=None, help="Server command string to launch (e.g. 'python server.py').")
+@click.option('--transport', type=click.Choice(['stdio', 'sse']), default='stdio', help="Transport protocol (default: stdio).")
+@click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
+@click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
+@click.option('--timeout', type=int, default=10000, help="Per-mutation timeout in milliseconds (default: 10000).")
+@click.option('--max-mutations', type=int, default=None, help="Maximum number of mutations to run.")
+@click.option('--max-payload-bytes', type=int, default=None, help="Skip mutations exceeding payload size in bytes.")
+@click.option('--wall-clock-limit', type=int, default=None, help="Maximum total run time in seconds.")
+@click.option('--max-restarts', type=int, default=10, help="Max server restarts on crash/timeout (default: 10).")
+@click.option('--strategy', type=click.Choice(['field_removal', 'type_confusion', 'boundary', 'truncated']), multiple=True, help="Mutation strategies to use. Repeatable.")
+@click.option('--seed', type=str, default=None, help="Mutation ordering seed. 'random' for non-deterministic, integer for reproducible shuffle.")
+@click.option('--json', 'json_output', is_flag=True, help="Output structured JSON envelope to stdout.")
+@click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
+def fuzz(snapshot, server, transport, sse_url, sse_header, timeout, max_mutations, max_payload_bytes, wall_clock_limit, max_restarts, strategy, seed, json_output, server_args):
+    """Run fuzz testing mode against an MCP server using a golden snapshot.
+    
+    Example:
+      mcp-vcr fuzz snapshots/my_server_golden.yaml -- python server.py
+      mcp-vcr fuzz --strategy field_removal --max-mutations 20 snapshots/my_server_golden.yaml --server "python server.py"
+    """
+    import shlex
+    args = []
+    if server:
+        args = shlex.split(server)
+    elif server_args:
+        args = list(server_args)
+        if args and args[0] == '--':
+            args = args[1:]
+
+    if transport == 'stdio' and not args:
+        err_msg = "No server command specified. What to try: use --server \"command\" or pass arguments after '--'."
+        if json_output:
+            emit_json(error_envelope("fuzz", err_msg))
+        else:
+            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+        sys.exit(1)
+
+    headers = {}
+    if transport == 'sse':
+        try:
+            sse_url, headers = _resolve_sse_settings(None, sse_url, sse_header)
+        except SseSettingsError as e:
+            if json_output:
+                emit_json(error_envelope("fuzz", str(e)))
+            else:
+                click.secho(f"ERROR: {e}", fg="red", err=True)
+            sys.exit(1)
+
+    resolved_seed: Optional[int] = None
+    raw_seed_str: Optional[str] = None
+    if seed:
+        if seed.lower() == "random":
+            import secrets
+            resolved_seed = secrets.randbelow(2**32)
+            raw_seed_str = f"{resolved_seed} (generated)"
+        else:
+            try:
+                resolved_seed = int(seed)
+                raw_seed_str = str(resolved_seed)
+            except ValueError:
+                err_msg = f"Invalid seed '{seed}'. Must be 'random' or an integer."
+                if json_output:
+                    emit_json(error_envelope("fuzz", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                sys.exit(1)
+
+    strategies_set = set(strategy) if strategy else None
+
+    exit_code = asyncio.run(run_fuzz(
+        snapshot_path=snapshot,
+        args=args,
+        transport=transport,
+        sse_url=sse_url,
+        headers=headers,
+        timeout=timeout,
+        max_mutations=max_mutations,
+        max_payload_bytes=max_payload_bytes,
+        wall_clock_limit=wall_clock_limit,
+        max_restarts=max_restarts,
+        strategies=strategies_set,
+        seed=resolved_seed,
+        raw_seed_str=raw_seed_str,
+        json_output=json_output,
+    ))
+    sys.exit(exit_code)
+
+
 if __name__ == "__main__":
     main()
+
 
 
 

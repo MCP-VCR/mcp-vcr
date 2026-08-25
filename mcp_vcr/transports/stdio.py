@@ -186,15 +186,23 @@ class StdioTransport(Transport):
     StdioTransport implements the Transport protocol for local MCP servers
     running as subprocesses communicating over stdin/stdout.
     """
-    def __init__(self, server_args: List[str], limit: int = 16 * 1024 * 1024, read_stdin: bool = True):
+    def __init__(self, server_args: List[str], limit: int = 16 * 1024 * 1024, read_stdin: bool = True, capture_stderr: bool = False):
         self.server_args = server_args
         self.limit = limit
         self.read_stdin = read_stdin
+        self.capture_stderr = capture_stderr
         self.process: Optional[asyncio.subprocess.Process] = None
         self.stdin_reader: Optional[asyncio.StreamReader] = None
         self.client_writer: Optional[StreamWriterWrapper] = None
         self.stderr_writer: Optional[StreamWriterWrapper] = None
         self._stderr_task: Optional[asyncio.Task] = None
+        self._stderr_lines: List[str] = []
+
+    def drain_captured_stderr(self) -> str:
+        """Return captured stderr lines joined by newline and clear internal buffer."""
+        captured = "".join(self._stderr_lines)
+        self._stderr_lines.clear()
+        return captured
 
     async def start(self) -> None:
         self.process = await launch_server(self.server_args, limit=self.limit)
@@ -303,6 +311,9 @@ class StdioTransport(Transport):
                 line = await self.process.stderr.readline()
                 if not line:
                     break
+                if self.capture_stderr:
+                    if len(self._stderr_lines) < 200:
+                        self._stderr_lines.append(line.decode("utf-8", errors="replace"))
                 self.stderr_writer.write(line)
                 await self.stderr_writer.drain()
             except asyncio.CancelledError:

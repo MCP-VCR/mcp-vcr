@@ -496,9 +496,26 @@ On some platforms, writing to stdout while the client isn't reading can block th
 
 The current Python asyncio implementation is correct and fast enough for development use. For high-throughput scenarios (large binary responses, many concurrent sessions), the transport layer (framing, pipe pumps) could be rewritten in Rust and exposed via PyO3. The Python recorder and diff engine would remain Python.
 
-### Fuzz mode
+### Fuzz Testing Engine (`mcp-vcr fuzz`)
 
-`mcp-vcr fuzz` would replay a transcript with mutations applied to client messages — truncated payloads, missing required fields, wrong types, oversized values. The goal is to probe server error handling and find crashes or protocol violations. Mutation strategies: field removal, type confusion, boundary values, and random byte injection.
+`mcp-vcr fuzz` reads a golden snapshot (or v1 transcript) and streams mutated client-to-server (`c2s`) messages against a live server process to probe crash resistance and error handling robustness.
+
+#### 1. Mutation Engine (`mcp_vcr.mutators`)
+The mutation library is stateless and transport-independent. It generates four distinct mutation strategies in deterministic order (`[field_removal, type_confusion, boundary, truncated]`):
+
+*   **Field Removal**: Omits required input schema parameters from `tools/call` arguments or required protocol fields from `initialize` parameters.
+*   **Type Confusion**: Swaps payload field data types (e.g., `str` → `42`, `int` → `"not_a_number"`, `list` → `dict`, `dict` → `list`, `bool` → `"true"`).
+*   **Boundary Violations**: Replaces argument values with edge values (integers `0`, `-1`, `2**53`, `-(2**53)`; strings `""`, `1MB string`; lists `[]`, `10,000 items`; dicts `{}`, depth 100 nested object).
+*   **Truncated Payloads**: Bypasses JSON serialization to send malformed raw bytes (50% sliced payload, opening brace `{`, empty bytes `b""`, trailing garbage `}}}}`).
+
+Ordering is deterministic by default. An optional `--seed` parameter (integer or `"random"`) shuffles the mutation order reproducibly.
+
+#### 2. Fuzz Runner & Process Lifecycle (`mcp_vcr.fuzzer`)
+*   **Transport Factory Pattern**: Creates a fresh `Transport` via a factory closure upon initial bootstrap and on every process restart.
+*   **Cache-Once Tools Schema**: Discovers `tools/list` schema live on initial bootstrap, then caches and reuses the schema across server restarts.
+*   **Verdict Classification**: Classifies each case as `pass` (valid JSON-RPC error response), `fail` (success result returned for invalid input or malformed error object), `crash` (EOF or process exit), `timeout` (response time > `timeout_ms`), `skipped` (payload size > `max_payload_bytes`), or `protocol_error` (missing/mismatched JSON-RPC `id` or malformed JSON).
+*   **Process Restart & Cleanup Guarantee**: Process exit (`crash`) or response timeout (`timeout`) triggers server termination via `transport.shutdown()` and restarts a fresh server subprocess. Restarts count against `--max-restarts` (default: 10). Stderr lines are buffered when `capture_stderr=True` on `StdioTransport` and attached to `FuzzCaseResult.detail` on crash.
+*   **Exit Code Semantics**: `0` = clean run (all pass/skipped), `1` = fuzz issues detected (failures, crashes, timeouts, protocol errors), `2` = run aborted early (wall-clock limit or max restarts budget exhausted).
 
 ### Inspector integration
 
