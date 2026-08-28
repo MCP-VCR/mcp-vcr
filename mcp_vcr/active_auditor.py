@@ -480,7 +480,6 @@ class ActiveAuditEngine:
                                     or "reply only with" in lower_resp
                                     or has_targeted_validation
                                 )
-                                )
                             else:
                                 is_reflection = bool(norm_payload and norm_payload in norm_resp_str)
 
