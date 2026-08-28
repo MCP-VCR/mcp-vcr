@@ -429,17 +429,31 @@ class ActiveAuditEngine:
                                 ),
                             )
                         elif is_echoed:
-                            case_res = ActiveAuditCaseResult(
-                                tool_name=t_name,
-                                canary=canary,
-                                verdict="vulnerable",
-                                elapsed_ms=elapsed_ms,
-                                response_snippet=redacted_snippet[:500],
-                                detail=redact_canaries(
-                                    f"Canary marker found in response after normalization for tool '{t_name}' field '{canary.target_field}'",
-                                    canary.canary_markers,
-                                ),
-                            )
+                            norm_payload = _normalize_for_matching(str(canary.payload_value))
+                            if norm_payload and norm_payload in norm_resp_str:
+                                case_res = ActiveAuditCaseResult(
+                                    tool_name=t_name,
+                                    canary=canary,
+                                    verdict="error",
+                                    elapsed_ms=elapsed_ms,
+                                    response_snippet=redacted_snippet[:500],
+                                    detail=redact_canaries(
+                                        f"Canary payload reflected verbatim in response for tool '{t_name}' field '{canary.target_field}' (inconclusive)",
+                                        canary.canary_markers,
+                                    ),
+                                )
+                            else:
+                                case_res = ActiveAuditCaseResult(
+                                    tool_name=t_name,
+                                    canary=canary,
+                                    verdict="vulnerable",
+                                    elapsed_ms=elapsed_ms,
+                                    response_snippet=redacted_snippet[:500],
+                                    detail=redact_canaries(
+                                        f"Canary marker found in response after normalization for tool '{t_name}' field '{canary.target_field}'",
+                                        canary.canary_markers,
+                                    ),
+                                )
                         else:
                             case_res = ActiveAuditCaseResult(
                                 tool_name=t_name,

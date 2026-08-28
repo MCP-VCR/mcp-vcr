@@ -1611,11 +1611,11 @@ async def run_audit(
                 click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             return 1
 
-        if headers and sse_url.startswith("http://"):
+        if headers:
             from urllib.parse import urlparse
             parsed = urlparse(sse_url)
-            if parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
-                err_msg = "Credential-bearing SSE requests must use HTTPS (unless pointing to localhost)"
+            if parsed.scheme.lower() != "https":
+                err_msg = "Credential-bearing SSE requests must use HTTPS"
                 if json_output:
                     emit_json(error_envelope("audit", err_msg))
                 else:
@@ -1623,13 +1623,16 @@ async def run_audit(
                 return 1
 
         server_display = _sanitize_url(sse_url)
-        make_transport = lambda: SseTransport(sse_url=sse_url, headers=headers)
+        def make_transport():
+            return SseTransport(sse_url=sse_url, headers=headers)
     else:
         server_display = " ".join(args)
         if active:
-            make_transport = lambda: SandboxedTransport(args, config=sb_cfg)
+            def make_transport():
+                return SandboxedTransport(args, config=sb_cfg)
         else:
-            make_transport = lambda: StdioTransport(args, read_stdin=False)
+            def make_transport():
+                return StdioTransport(args, read_stdin=False)
 
 
     from .auditor import AuditEngine
