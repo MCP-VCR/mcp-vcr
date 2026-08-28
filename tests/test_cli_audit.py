@@ -15,7 +15,8 @@ def test_audit_without_passive_flag_fails():
     runner = CliRunner()
     result = runner.invoke(main, ["audit", "--", sys.executable, TOY_SERVER_PY])
     assert result.exit_code == 2
-    assert "--passive flag is required" in result.output
+    assert "Either --passive or --active flag is required" in result.output
+
 
 
 def test_audit_no_server_args_fails():

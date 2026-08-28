@@ -42,7 +42,9 @@ packages = ["mcp_vcr", "mcp_vcr.schemas", "mcp_vcr.transports", "mcp_vcr.communi
 [tool.setuptools.package-data]
 mcp_vcr = [
   "schemas/*.json",
+  "report_template.html",
 ]
+
 "mcp_vcr.community" = [
   "*.yaml",
   "*/*.yaml",

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>$title</title>
+  <style>
+    :root {
+      --bg-color: #121212;
+      --card-bg: #1e1e1e;
+      --text-color: #e0e0e0;
+      --text-muted: #a0a0a0;
+      --accent-cyan: #00BCD4;
+      --accent-green: #4CAF50;
+      --accent-red: #F44336;
+      --accent-yellow: #FFC107;
+      --border-color: #333333;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 24px;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    header {
+      border-bottom: 2px solid var(--accent-cyan);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      color: var(--accent-cyan);
+      font-size: 28px;
+    }
+    .meta-info {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+    .summary-banner {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    .badge-pass { background-color: rgba(76, 175, 80, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+    .badge-fail { background-color: rgba(244, 67, 54, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+    .badge-warn { background-color: rgba(255, 193, 7, 0.2); color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
+    
+    details {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    summary {
+      padding: 16px 20px;
+      font-weight: bold;
+      font-size: 18px;
+      cursor: pointer;
+      user-select: none;
+      background-color: rgba(255, 255, 255, 0.02);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    summary:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+    .section-content {
+      padding: 20px;
+      border-top: 1px solid var(--border-color);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+    th {
+      background-color: rgba(255, 255, 255, 0.04);
+      color: var(--accent-cyan);
+    }
+    pre {
+      background-color: #181818;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      padding: 12px;
+      overflow-x: auto;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+      margin: 8px 0;
+    }
+    .line-add { color: var(--accent-green); }
+    .line-del { color: var(--accent-red); }
+    
+    @media print {
+      body { background-color: #fff; color: #000; }
+      details { open: true; border: 1px solid #ccc; }
+      summary { background-color: #eee; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>$title</h1>
+      <div class="meta-info">
+        Generated: $generated_at &nbsp;|&nbsp; mcp-vcr v$version &nbsp;|&nbsp; Report Schema v$report_schema_version
+      </div>
+    </header>
+
+    <div class="summary-banner">
+      $summary_html
+    </div>
+
+    <main>
+      $sections_html
+    </main>
+  </div>
+</body>
+</html>
