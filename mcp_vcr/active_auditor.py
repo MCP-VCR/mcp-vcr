@@ -448,23 +448,22 @@ class ActiveAuditEngine:
                                 )
                             elif canary.category == "prompt_injection":
                                 lower_resp = norm_resp_str.lower()
+                                tf = canary.target_field.lower()
+                                field_validation_signals = (
+                                    f"invalid {tf}",
+                                    f"invalid input for {tf}",
+                                    f"validation failed for {tf}",
+                                    f"prohibited input for {tf}",
+                                    f"prohibited marker for {tf}",
+                                    f"parameter '{tf}'",
+                                    f"field '{tf}'",
+                                    f"argument '{tf}'",
+                                )
                                 is_reflection = bool(
                                     (norm_payload and norm_payload in norm_resp_str)
                                     or "ignore all previous instructions" in lower_resp
                                     or "reply only with" in lower_resp
-                                    or any(
-                                        kw in lower_resp
-                                        for kw in (
-                                            "invalid",
-                                            "prohibited",
-                                            "rejected",
-                                            "error",
-                                            "validation",
-                                            "schema",
-                                            "contains",
-                                            "reject",
-                                        )
-                                    )
+                                    or any(sig in lower_resp for sig in field_validation_signals)
                                 )
                             else:
                                 is_reflection = bool(norm_payload and norm_payload in norm_resp_str)
