@@ -257,3 +257,17 @@ async def test_active_audit_engine_verbatim_echo():
     assert result.exit_code == 0
 
 
+@pytest.mark.asyncio
+async def test_active_audit_engine_high_tier_gate_raises_before_bootstrap():
+    transport = MockTransport()
+    def transport_factory():
+        return transport
+
+    engine = ActiveAuditEngine(timeout_ms=1000, severity_tier="high", allow_high=False)
+    with pytest.raises(ValueError, match="High-tier canary generation requires allow_high=True"):
+        await engine.run(transport_factory)
+
+    assert not transport.running
+
+
+

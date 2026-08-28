@@ -28,6 +28,12 @@ class SseTransport(Transport):
         self.headers = headers or {}
         self.limit = limit
         self.post_timeout = post_timeout
+
+        if self.headers:
+            from urllib.parse import urlparse
+            for url_to_check in (self.sse_url, self.post_url):
+                if url_to_check and urlparse(url_to_check).scheme.lower() != "https":
+                    raise ValueError("Credential-bearing SSE requests must use HTTPS.")
         
         self.session: Optional[aiohttp.ClientSession] = None
         self.stdin_reader: Optional[asyncio.StreamReader] = None

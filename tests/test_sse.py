@@ -183,3 +183,9 @@ messages:
     finally:
         await runner.cleanup()
 
+
+def test_sse_transport_http_headers_raises_value_error():
+    with pytest.raises(ValueError, match="Credential-bearing SSE requests must use HTTPS."):
+        SseTransport(sse_url="http://localhost:8000/sse", headers={"Authorization": "Bearer test"})
+
+

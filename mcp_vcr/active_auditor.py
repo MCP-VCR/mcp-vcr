@@ -263,6 +263,14 @@ class ActiveAuditEngine:
         transport_factory: Callable[[], Transport],
         sandbox_config: Optional[SandboxConfig] = None,
     ) -> ActiveAuditResult:
+        if self.severity_tier == "high" and not self.allow_high:
+            raise ValueError(
+                "High-tier canary generation requires allow_high=True. "
+                "High-tier payloads include command injection probes "
+                "(e.g., $(echo ...), `echo ...`, ; echo ...). "
+                "Set allow_high=True to confirm."
+            )
+
         sb_config = sandbox_config or SandboxConfig(max_restarts=self.max_restarts)
 
         current_transport: Optional[Transport] = None
@@ -331,18 +339,17 @@ class ActiveAuditEngine:
                 exit_code=1,
             )
 
-        # Generate payloads (will raise ValueError if severity_tier="high" and allow_high=False)
-        payloads = generate_canary_payloads(
-            discovered_tools,
-            severity_tier=self.severity_tier,
-            allow_high=self.allow_high,
-        )
-
         findings: List[ActiveAuditCaseResult] = []
         generator = GeneratorEngine()
         request_counter = 100
 
         try:
+            # Generate payloads (will raise ValueError if severity_tier="high" and allow_high=False)
+            payloads = generate_canary_payloads(
+                discovered_tools,
+                severity_tier=self.severity_tier,
+                allow_high=self.allow_high,
+            )
             for tool in discovered_tools:
                 if not isinstance(tool, dict):
                     continue
