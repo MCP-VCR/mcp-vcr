@@ -437,16 +437,39 @@ class ActiveAuditEngine:
                             )
                         elif is_echoed:
                             norm_payload = _normalize_for_matching(str(canary.payload_value))
-                            reflected = bool(norm_payload and norm_payload in norm_resp_str)
-                            marker_after_reflection = (
-                                check_canary_echo(
-                                    norm_resp_str.replace(norm_payload, ""),
-                                    canary.canary_markers,
+                            is_reflection = False
+
+                            if canary.category == "path_traversal":
+                                is_reflection = bool(norm_payload and norm_payload in norm_resp_str)
+                            elif canary.category == "command_injection":
+                                is_reflection = bool(
+                                    (norm_payload and norm_payload in norm_resp_str)
+                                    or "echo" in norm_resp_str.lower()
                                 )
-                                if reflected
-                                else False
-                            )
-                            if reflected and not marker_after_reflection:
+                            elif canary.category == "prompt_injection":
+                                lower_resp = norm_resp_str.lower()
+                                is_reflection = bool(
+                                    (norm_payload and norm_payload in norm_resp_str)
+                                    or "ignore all previous instructions" in lower_resp
+                                    or "reply only with" in lower_resp
+                                    or any(
+                                        kw in lower_resp
+                                        for kw in (
+                                            "invalid",
+                                            "prohibited",
+                                            "rejected",
+                                            "error",
+                                            "validation",
+                                            "schema",
+                                            "contains",
+                                            "reject",
+                                        )
+                                    )
+                                )
+                            else:
+                                is_reflection = bool(norm_payload and norm_payload in norm_resp_str)
+
+                            if is_reflection:
                                 case_res = ActiveAuditCaseResult(
                                     tool_name=t_name,
                                     canary=canary,
@@ -454,7 +477,7 @@ class ActiveAuditEngine:
                                     elapsed_ms=elapsed_ms,
                                     response_snippet=redacted_snippet[:500],
                                     detail=redact_canaries(
-                                        f"Canary payload reflected verbatim in response for tool '{t_name}' field '{canary.target_field}' (inconclusive)",
+                                        f"Canary payload or marker reflected in response for tool '{t_name}' field '{canary.target_field}' (inconclusive)",
                                         canary.canary_markers,
                                     ),
                                 )
