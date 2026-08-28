@@ -449,21 +449,37 @@ class ActiveAuditEngine:
                             elif canary.category == "prompt_injection":
                                 lower_resp = norm_resp_str.lower()
                                 tf = canary.target_field.lower()
-                                field_validation_signals = (
+                                direct_validation_signals = (
                                     f"invalid {tf}",
                                     f"invalid input for {tf}",
                                     f"validation failed for {tf}",
                                     f"prohibited input for {tf}",
                                     f"prohibited marker for {tf}",
+                                )
+                                target_field_references = (
                                     f"parameter '{tf}'",
                                     f"field '{tf}'",
                                     f"argument '{tf}'",
+                                )
+                                has_targeted_validation = (
+                                    any(sig in lower_resp for sig in direct_validation_signals)
+                                    or (
+                                        any(term in lower_resp for term in (
+                                            "invalid", "prohibited", "rejected",
+                                            "validation failed",
+                                        ))
+                                        and any(
+                                            ref in lower_resp
+                                            for ref in target_field_references
+                                        )
+                                    )
                                 )
                                 is_reflection = bool(
                                     (norm_payload and norm_payload in norm_resp_str)
                                     or "ignore all previous instructions" in lower_resp
                                     or "reply only with" in lower_resp
-                                    or any(sig in lower_resp for sig in field_validation_signals)
+                                    or has_targeted_validation
+                                )
                                 )
                             else:
                                 is_reflection = bool(norm_payload and norm_payload in norm_resp_str)
