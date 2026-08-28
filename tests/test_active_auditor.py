@@ -99,14 +99,17 @@ def test_redact_canaries_unconditional_parity():
     assert redact_canaries("no canary", []) == "no canary"
 
 
-def test_sandbox_config_env():
+def test_sandbox_config_env(monkeypatch):
+    monkeypatch.setenv("MY_SPECIAL_KEY", "SECRET_VALUE")
     sb = SandboxConfig(restrict_env=True, restrict_path=True, allow_env=["MY_SPECIAL_KEY"])
     st = SandboxedTransport(["python", "server.py"], config=sb)
     env = st._build_env()
 
     assert "PATH" in env
-    assert env["PATH"] == "/usr/bin:/bin:/usr/local/bin"
+    assert env["PATH"].endswith("/usr/bin:/bin:/usr/local/bin")
+    assert env.get("MY_SPECIAL_KEY") == "SECRET_VALUE"
     assert env.get("MCP_VCR_SANDBOX") == "1"
+
 
 
 class MockTransport:
@@ -183,20 +186,6 @@ class MockTransport:
     def server_running(self):
         return self.running
 
-
-
-
-
-    async def write_to_client(self, data: bytes):
-        pass
-
-    async def shutdown(self, sig=None):
-        self.running = False
-        return 0
-
-    @property
-    def server_running(self):
-        return self.running
 
 
 

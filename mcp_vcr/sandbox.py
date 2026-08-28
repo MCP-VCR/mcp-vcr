@@ -1,8 +1,9 @@
+import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
-import logging
 
 from .transports.base import Transport
 from .transports.stdio import StdioTransport
@@ -17,7 +18,7 @@ class SandboxConfig:
     Provides:
     - Environment variable scrubbing (prevents credential leakage TO the server)
     - PATH restriction (limits which binaries the server can exec)
-    - Optional tmpdir isolation for server CWD
+    - Optional tmpdir isolation for server CWD and TMPDIR
     - Allowlist for specific env vars servers need
 
     Does NOT provide:
@@ -64,6 +65,8 @@ class SandboxedTransport(Transport):
         if self.config.restrict_env:
             # Always inherit basic localization, python/node paths
             safe_vars = {"LANG", "LC_ALL", "TERM", "PYTHONPATH", "NODE_PATH"}
+            if not self.config.restrict_path:
+                safe_vars.add("PATH")
             safe_vars.update(self.config.allow_env)
 
             for k in safe_vars:
@@ -73,36 +76,28 @@ class SandboxedTransport(Transport):
             env = dict(os.environ)
 
         if self.config.restrict_path:
-            import sys
             venv_bin = os.path.dirname(sys.executable)
             env["PATH"] = f"{venv_bin}:/usr/bin:/bin:/usr/local/bin"
 
+        if self.config.tmpdir:
+            env["TMPDIR"] = str(self.config.tmpdir)
 
         env["MCP_VCR_SANDBOX"] = "1"
         return env
 
     async def start(self) -> None:
-        # Pass restricted env to StdioTransport via process env override if supported, or via launch_server kwargs
-        # Note: StdioTransport launches subprocess using server_args.
-        # We can configure environment by setting os.environ temporarily or extending StdioTransport.
-        # To be clean and robust, we monkey-patch / launch with env.
-        # However, StdioTransport uses launch_server. We instantiate StdioTransport and start it.
-        # Let's customize env injection prior to launching.
-        old_env = dict(os.environ)
         new_env = self._build_env()
-        try:
-            os.environ.clear()
-            os.environ.update(new_env)
-            self._inner = StdioTransport(
-                self.server_args,
-                limit=self.limit,
-                read_stdin=False,
-                capture_stderr=True,
-            )
-            await self._inner.start()
-        finally:
-            os.environ.clear()
-            os.environ.update(old_env)
+        cwd_path = str(self.config.tmpdir) if self.config.tmpdir else None
+        self._inner = StdioTransport(
+            self.server_args,
+            limit=self.limit,
+            read_stdin=False,
+            capture_stderr=True,
+            env=new_env,
+            cwd=cwd_path,
+        )
+        await self._inner.start()
+
 
     async def read_client_message(self) -> Optional[bytes]:
         if not self._inner:

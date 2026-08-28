@@ -1588,6 +1588,15 @@ async def run_audit(
     sandbox_allow_env: Tuple[str, ...] = (),
     max_restarts: int = 5,
 ) -> int:
+    from .sandbox import SandboxConfig, SandboxedTransport
+    from .transports import StdioTransport
+
+    sb_cfg = SandboxConfig(
+        tmpdir=sandbox_tmpdir,
+        allow_env=list(sandbox_allow_env),
+        max_restarts=max_restarts,
+    )
+
     SseTransport = None
     if transport == "sse":
         try:
@@ -1601,18 +1610,27 @@ async def run_audit(
             else:
                 click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             return 1
+
+        if headers and sse_url.startswith("http://"):
+            from urllib.parse import urlparse
+            parsed = urlparse(sse_url)
+            if parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+                err_msg = "Credential-bearing SSE requests must use HTTPS (unless pointing to localhost)"
+                if json_output:
+                    emit_json(error_envelope("audit", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                return 1
+
         server_display = _sanitize_url(sse_url)
         make_transport = lambda: SseTransport(sse_url=sse_url, headers=headers)
     else:
-        from .sandbox import SandboxConfig, SandboxedTransport
-        from .transports import StdioTransport
         server_display = " ".join(args)
-        sb_cfg = SandboxConfig(
-            tmpdir=sandbox_tmpdir,
-            allow_env=list(sandbox_allow_env),
-            max_restarts=max_restarts,
-        )
-        make_transport = lambda: SandboxedTransport(args, config=sb_cfg)
+        if active:
+            make_transport = lambda: SandboxedTransport(args, config=sb_cfg)
+        else:
+            make_transport = lambda: StdioTransport(args, read_stdin=False)
+
 
     from .auditor import AuditEngine
     engine = AuditEngine(timeout_ms=timeout)
@@ -1633,7 +1651,9 @@ async def run_audit(
                 severity_tier=active_level,
                 allow_high=i_understand_the_risks,
                 delay_ms=delay_ms,
+                sandbox_config=sb_cfg,
             )
+
         except Exception as e:
             err_msg = f"Active audit failed: {e}"
             if json_output:
