@@ -270,4 +270,64 @@ async def test_active_audit_engine_high_tier_gate_raises_before_bootstrap():
     assert not transport.running
 
 
+class MockReflectionAndExecutionTransport(MockTransport):
+    async def write_to_server(self, data: bytes):
+        try:
+            req = json.loads(data.decode("utf-8").strip())
+        except Exception:
+            return
+
+        req_id = req.get("id")
+        method = req.get("method")
+        if req_id is None:
+            return
+
+        if method == "initialize":
+            resp = {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": {"name": "vuln-server"},
+                },
+            }
+        elif method == "tools/list":
+            resp = {"jsonrpc": "2.0", "id": req_id, "result": {"tools": self.tools}}
+        elif method == "tools/call":
+            args = req.get("params", {}).get("arguments", {})
+            val = args.get("path", "")
+            resp = {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Input: {val} Output: MCP_VCR_CANARY_PROMPT_read_file_path",
+                        }
+                    ]
+                },
+            }
+        else:
+            resp = {"jsonrpc": "2.0", "id": req_id, "result": {}}
+
+        payload_bytes = json.dumps(resp).encode("utf-8") + b"\n"
+        await self.queue.put(payload_bytes)
+
+
+@pytest.mark.asyncio
+async def test_active_audit_engine_reflection_and_execution_vulnerable():
+    def transport_factory():
+        return MockReflectionAndExecutionTransport()
+
+    engine = ActiveAuditEngine(timeout_ms=1000, severity_tier="medium", delay_ms=0)
+    result: ActiveAuditResult = await engine.run(transport_factory)
+
+    assert result.tools_audited == 1
+    assert result.canaries_executed > 0
+    assert result.summary["vulnerable"] > 0
+    assert result.exit_code == 1
+
+
+
 

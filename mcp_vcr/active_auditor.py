@@ -154,7 +154,7 @@ def generate_canary_payloads(
                         tool_name=t_name,
                         target_field=p_name,
                         payload_value="../../../../etc/passwd",
-                        canary_markers=["root:", "daemon:", "nobody:"],
+                        canary_markers=["root:x:0:0:", "daemon:x:1:1:", "nobody:x:65534:65534:"],
                     )
                 )
                 # Windows system32 probe
@@ -178,7 +178,7 @@ def generate_canary_payloads(
                         tool_name=t_name,
                         target_field=p_name,
                         payload_value="%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-                        canary_markers=["root:", "daemon:"],
+                        canary_markers=["root:x:0:0:", "daemon:x:1:1:"],
                     )
                 )
 
@@ -437,7 +437,16 @@ class ActiveAuditEngine:
                             )
                         elif is_echoed:
                             norm_payload = _normalize_for_matching(str(canary.payload_value))
-                            if norm_payload and norm_payload in norm_resp_str:
+                            reflected = bool(norm_payload and norm_payload in norm_resp_str)
+                            marker_after_reflection = (
+                                check_canary_echo(
+                                    norm_resp_str.replace(norm_payload, ""),
+                                    canary.canary_markers,
+                                )
+                                if reflected
+                                else False
+                            )
+                            if reflected and not marker_after_reflection:
                                 case_res = ActiveAuditCaseResult(
                                     tool_name=t_name,
                                     canary=canary,
