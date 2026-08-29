@@ -1,31 +1,12 @@
 # MCP-VCR Development Roadmap
 
-## The Core Invariant
-
-All architectural decisions, integrations, and extensions are governed by a single core anchor:  
-**A deterministic, replayable, human-readable MCP transcript format.**
-
-*   **Human-Readable**: Stored as clean, git-diffable YAML transcripts.
-*   **Deterministic**: Normalizes dynamic variables (timestamps, IDs, UUIDs, cursors) so that subsequent test runs are byte-identical.
-*   **Transparent**: Proxy intercepts traffic without mutating stream messages in-flight.
-*   **Version-Aware**: Supports robust transcript versioning (`version: 1`) and backward compatibility gates (`version: 0`).
-
----
-
-## Phase Overview
+## Overview
 
 ```text
-                     MCP-VCR Core Engine (Phase 1 & 2 Shipped)
+                    MCP-VCR Core Engine (Phase 1 & 2 Shipped)
                                   │
                                   ▼
-                          Phase 3 (Active)
-                       Security & Resilience
-                  Active security audit
-                  Structured test reports
-                                  │
-                                  ▼
-                          Phase 4 (Demand-Gated)
-                       Platform & Performance
+                     Platform & Performance (Demand-Gated)
                     Inspector integration · Compat matrix
                     Parallel verification · Incremental updates
                     Plugin system · Rust transport core
@@ -38,23 +19,7 @@ All architectural decisions, integrations, and extensions are governed by a sing
 
 ---
 
-## Phase 3: Security & Resilience (Active)
-
-Focus: Differentiate mcp-vcr as a security-conscious testing tool.
-
-### 1. Security Audit Suite — Active Mode
-*   **Objective**: Adversarial payload injection for prompt injection, path traversal, command injection.
-*   **Mechanism**: Extends passive mode with actual `tools/call` invocations using adversarial arguments. Requires explicit user opt-in and target authorization. Runs only inside sandboxed, isolated targets with restricted filesystem access and blocked network egress. Employs harmless canary payloads (rather than raw commands like `;rm -rf /`) combined with timeouts, cancellation, and output redaction to inspect command/path traversal susceptibility safely.
-*   **Dependencies**: Passive Audit (Shipped), Fuzz Testing (Shipped).
-
-### 2. Structured Test Reports
-*   **Objective**: Generate HTML/JSON report files with pass/fail summaries, diff outputs, and performance metrics.
-*   **Mechanism**: `mcp-vcr report --format html` generates a standalone HTML report from verify/test/audit results. JSON format for CI artifact storage.
-*   **Dependencies**: `--json` CLI output (Shipped), test/audit commands.
-
----
-
-## Phase 4: Platform & Performance (Demand-Gated)
+## Platform & Performance (Demand-Gated)
 
 Features that require stable adoption signals or community demand before starting.
 
@@ -99,22 +64,9 @@ These features have large surface area and unclear payoff at the current adoptio
 ### Cross-Language Replay (Python → TypeScript/Node.js)
 *   **Rationale**: "Record in Python, replay in TypeScript" requires a second full implementation of the replay engine, transcript parser, and diff engine. The transcript format (YAML/NDJSON) is language-neutral, but the tooling around it is not. Better to let the TypeScript ecosystem build their own tool that reads the same format.
 
----
-
-## Prioritization Principles
-
-1.  **Adoption leverage first**: Features that let new users try mcp-vcr in under a minute (`generate`, `--json`) come before features that improve the experience for power users (plugin system, VS Code extension).
-2.  **Narrow > broad**: Ship a 3-check passive audit before a 15-check active+adversarial suite. Ship `--json` on `verify` before a full HTML report generator.
-3.  **Demand-gated, not roadmap-driven**: Phase 4 features start when users ask for them, not when the roadmap says they're next.
-4.  **Security is a differentiator**: Given the current MCP tooling landscape, passive security analysis is underserved and high-signal. Worth prioritizing over commodity features.
-
----
-
 ## When to Revisit the Roadmap
 
 Work on gated areas will be prioritized based on key checkpoints:
 
-1.  **Stable Adoption**: Core v0.1 CLI is actively used by ≥ 1 external project.
-2.  **Phase 1 & 2 Shipped**: Transport abstraction, adoption accelerators, and passive audit/fuzzing are complete and tested.
-3.  **Community Signals**: Developer feedback identifies which deferred area is most highly wanted for their workflows.
-4.  **Performance Auditing**: Comprehensive profiling against large transcripts (e.g., sessions with >100 interactions or >50MB files).
+1.  **Community Signals**: Developer feedback identifies which deferred area is most highly wanted for their workflows.
+2.  **Performance Auditing**: Comprehensive profiling against large transcripts (e.g., sessions with >100 interactions or >50MB files).
