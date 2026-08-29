@@ -15,7 +15,8 @@ def test_audit_without_passive_flag_fails():
     runner = CliRunner()
     result = runner.invoke(main, ["audit", "--", sys.executable, TOY_SERVER_PY])
     assert result.exit_code == 2
-    assert "--passive flag is required" in result.output
+    assert "Either --passive or --active flag is required" in result.output
+
 
 
 def test_audit_no_server_args_fails():
@@ -110,3 +111,24 @@ def test_audit_benign_jargon_server_zero_false_positives():
     # Should have zero high and zero medium findings
     assert data["summary"]["high"] == 0
     assert data["summary"]["medium"] == 0
+
+
+def test_audit_active_sse_http_with_headers_fails():
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "audit",
+            "--active",
+            "--i-understand-the-risks",
+            "--transport",
+            "sse",
+            "--sse-url",
+            "http://localhost:8000/sse",
+            "--sse-header",
+            "Authorization: Bearer test",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Credential-bearing SSE requests must use HTTPS" in result.output
+

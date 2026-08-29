@@ -28,6 +28,12 @@ class SseTransport(Transport):
         self.headers = headers or {}
         self.limit = limit
         self.post_timeout = post_timeout
+
+        if self.headers:
+            from urllib.parse import urlparse
+            for url_to_check in (self.sse_url, self.post_url):
+                if url_to_check and urlparse(url_to_check).scheme.lower() != "https":
+                    raise ValueError("Credential-bearing SSE requests must use HTTPS.")
         
         self.session: Optional[aiohttp.ClientSession] = None
         self.stdin_reader: Optional[asyncio.StreamReader] = None
@@ -78,8 +84,9 @@ class SseTransport(Transport):
 
         logger.debug(f"POSTing to {self.post_url} (JSON-RPC method: {method!r}, id: {msg_id!r})")
         timeout = aiohttp.ClientTimeout(total=self.post_timeout)
+        allow_redir = not bool(self.headers)
         try:
-            async with self.session.post(self.post_url, json=payload, timeout=timeout) as resp:
+            async with self.session.post(self.post_url, json=payload, timeout=timeout, allow_redirects=allow_redir) as resp:
                 if resp.status not in (200, 202, 204):
                     raise ValueError(f"SSE POST returned unexpected status: {resp.status}")
         except Exception as e:
@@ -126,8 +133,9 @@ class SseTransport(Transport):
     async def _read_sse_stream(self) -> None:
         if not self.session:
             return
+        allow_redir = not bool(self.headers)
         try:
-            async with self.session.get(self.sse_url) as response:
+            async with self.session.get(self.sse_url, allow_redirects=allow_redir) as response:
                 if response.status != 200:
                     logger.error(f"SSE connection failed with status: {response.status}")
                     self._server_queue.put_nowait(None)

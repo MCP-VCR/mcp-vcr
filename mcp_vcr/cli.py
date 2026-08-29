@@ -1580,7 +1580,23 @@ async def run_audit(
     timeout: int,
     severity: str,
     json_output: bool,
+    active: bool = False,
+    active_level: str = "medium",
+    i_understand_the_risks: bool = False,
+    delay_ms: int = 100,
+    sandbox_tmpdir: Optional[Path] = None,
+    sandbox_allow_env: Tuple[str, ...] = (),
+    max_restarts: int = 5,
 ) -> int:
+    from .sandbox import SandboxConfig, SandboxedTransport
+    from .transports import StdioTransport
+
+    sb_cfg = SandboxConfig(
+        tmpdir=sandbox_tmpdir,
+        allow_env=list(sandbox_allow_env),
+        max_restarts=max_restarts,
+    )
+
     SseTransport = None
     if transport == "sse":
         try:
@@ -1594,91 +1610,199 @@ async def run_audit(
             else:
                 click.secho(f"ERROR: {err_msg}", fg="red", err=True)
             return 1
-        transport_inst = SseTransport(sse_url=sse_url, headers=headers)
-        server_display = _sanitize_url(sse_url)
-    else:
-        from .transports import StdioTransport
-        transport_inst = StdioTransport(args, read_stdin=False)
-        server_display = " ".join(args)
 
-    if not json_output:
-        click.secho(f"Security Audit — Passive Mode", fg="cyan", bold=True, err=True)
-        click.secho(f"Auditing server: {server_display}", fg="cyan", err=True)
+        if headers:
+            from urllib.parse import urlparse
+            parsed = urlparse(sse_url)
+            if parsed.scheme.lower() != "https":
+                err_msg = "Credential-bearing SSE requests must use HTTPS"
+                if json_output:
+                    emit_json(error_envelope("audit", err_msg))
+                else:
+                    click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+                return 1
+
+        server_display = _sanitize_url(sse_url)
+        def make_transport():
+            return SseTransport(sse_url=sse_url, headers=headers)
+    else:
+        server_display = " ".join(args)
+        if active:
+            def make_transport():
+                return SandboxedTransport(args, config=sb_cfg)
+        else:
+            def make_transport():
+                return StdioTransport(args, read_stdin=False)
+
 
     from .auditor import AuditEngine
     engine = AuditEngine(timeout_ms=timeout)
 
-    try:
-        res = await engine.run_passive_audit(transport_inst, severity_filter=severity)
-    except Exception as e:
-        err_msg = f"Audit failed: {e}"
+    if active:
+        if not json_output:
+            click.secho("⚠ ACTIVE AUDIT MODE", fg="yellow", bold=True, err=True)
+            click.secho("  This will send adversarial canary payloads to the server via tools/call.", fg="yellow", err=True)
+            click.secho("  Ensure the target is authorized for security testing.\n", fg="yellow", err=True)
+            click.secho("  Process hygiene: environment scrubbed, PATH restricted.", fg="yellow", err=True)
+            click.secho("  NOT contained: server retains host filesystem and network access.", fg="yellow", err=True)
+            click.secho("  For containment, run inside a container (Docker/Podman).\n", fg="yellow", err=True)
+            click.secho(f"Auditing server: {server_display}", fg="cyan", err=True)
+
+        try:
+            res = await engine.run_active_audit(
+                transport_factory=make_transport,
+                severity_tier=active_level,
+                allow_high=i_understand_the_risks,
+                delay_ms=delay_ms,
+                sandbox_config=sb_cfg,
+            )
+
+        except Exception as e:
+            err_msg = f"Active audit failed: {e}"
+            if json_output:
+                emit_json(error_envelope("audit", err_msg))
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+            return 1
+
         if json_output:
-            emit_json(error_envelope("audit", err_msg))
+            emit_json({
+                "status": "ok" if res.exit_code == 0 else "fail",
+                "command": "audit",
+                "mode": "active",
+                "server_info": res.server_info,
+                "protocol_version": res.protocol_version,
+                "tools_audited": res.tools_audited,
+                "canaries_executed": res.canaries_executed,
+                "severity_tier": res.severity_tier,
+                "findings": [
+                    {
+                        "tool": f.tool_name,
+                        "canary": f.canary.name if hasattr(f.canary, "name") else str(f.canary),
+                        "category": f.canary.category if hasattr(f.canary, "category") else "canary",
+                        "verdict": f.verdict,
+                        "elapsed_ms": f.elapsed_ms,
+                        "response_snippet": f.response_snippet,
+                        "detail": f.detail,
+                    }
+                    for f in res.findings
+                ],
+                "summary": res.summary,
+                "known_limitations": res.known_limitations,
+                "exit_code": res.exit_code,
+            })
         else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        return 1
+            s_info = res.server_info
+            s_name = s_info.get("name", "server") if isinstance(s_info, dict) else "server"
+            s_ver = s_info.get("version", "") if isinstance(s_info, dict) else ""
+            s_str = f"{s_name} v{s_ver}".strip() if s_ver else s_name
 
-    if json_output:
-        emit_json({
-            "status": "ok" if res.exit_code == 0 else "fail",
-            "command": "audit",
-            "mode": "passive",
-            "server_info": res.server_info,
-            "protocol_version": res.protocol_version,
-            "tools_discovered": res.tools_discovered,
-            "severity_filter": res.severity_filter,
-            "findings": [
-                {
-                    "check": f.check,
-                    "severity": f.severity,
-                    "tool": f.tool,
-                    "message": f.message,
-                    "detail": f.detail,
-                }
-                for f in res.findings
-            ],
-            "checks_run": res.checks_run,
-            "summary": res.summary,
-            "raw_summary": res.raw_summary,
-        })
+            click.echo(f"Server: {s_str} (protocol: {res.protocol_version})", err=True)
+            click.echo(f"Tools audited: {res.tools_audited} | Canaries executed: {res.canaries_executed}\n", err=True)
+
+            click.secho("━━ Active Audit Findings ━━\n", fg="cyan", bold=True, err=True)
+            if not res.findings:
+                click.secho("  ✓ No vulnerabilities detected.", fg="green", err=True)
+            else:
+                for f in res.findings:
+                    v_color = "red" if f.verdict == "vulnerable" else ("yellow" if f.verdict in ("timeout", "crash", "error") else "green")
+                    v_str = click.style(f"  {f.verdict.upper():<10}", fg=v_color, bold=True)
+                    canary_label = f.canary.name if hasattr(f.canary, "name") else str(f.canary)
+                    click.echo(f"{v_str} [{_terminal_safe(canary_label)}] tool \"{_terminal_safe(f.tool_name)}\"", err=True)
+                    if f.detail:
+                        click.echo(f"          Detail: {_terminal_safe(f.detail)} ({f.elapsed_ms}ms)", err=True)
+                    if f.response_snippet:
+                        click.echo(f"          Snippet: {_terminal_safe(f.response_snippet)}", err=True)
+                    click.echo(err=True)
+
+            click.secho("━━ Summary ━━", fg="cyan", bold=True, err=True)
+            sum_dict = res.summary
+            sum_str = f"{res.canaries_executed} canaries | {sum_dict['safe']} safe, {sum_dict['vulnerable']} vulnerable, {sum_dict['crash']} crash, {sum_dict['timeout']} timeout"
+            res_color = "green" if res.exit_code == 0 else "red"
+            click.secho(f"  {sum_str}", fg=res_color, err=True)
+            click.secho(f"\nKnown v1 limitations:", fg="yellow", err=True)
+            for lim in res.known_limitations:
+                click.secho(f"  • {lim}", fg="yellow", err=True)
+            click.echo(err=True)
+
+        return res.exit_code
+
     else:
-        s_info = res.server_info
-        s_name = s_info.get("name", "server") if isinstance(s_info, dict) else "server"
-        s_ver = s_info.get("version", "") if isinstance(s_info, dict) else ""
-        s_str = f"{s_name} v{s_ver}".strip() if s_ver else s_name
+        if not json_output:
+            click.secho(f"Security Audit — Passive Mode", fg="cyan", bold=True, err=True)
+            click.secho(f"Auditing server: {server_display}", fg="cyan", err=True)
 
-        click.echo(f"Server: {s_str} (protocol: {res.protocol_version})", err=True)
-        click.echo(f"Tools: {res.tools_discovered} discovered\n", err=True)
-        click.secho(
-            "Note: Passive audit uses static pattern matching. Findings are leads for\n"
-            "human review, not proof of vulnerability. Easily evaded by obfuscation.\n",
-            fg="yellow",
-            err=True,
-        )
+        t_inst = make_transport()
+        try:
+            res = await engine.run_passive_audit(t_inst, severity_filter=severity)
+        except Exception as e:
+            err_msg = f"Audit failed: {e}"
+            if json_output:
+                emit_json(error_envelope("audit", err_msg))
+            else:
+                click.secho(f"ERROR: {err_msg}", fg="red", err=True)
+            return 1
 
-        click.secho("━━ Findings ━━\n", fg="cyan", bold=True, err=True)
-        if not res.findings:
-            click.secho("  ✓ No findings detected at or above severity threshold.", fg="green", err=True)
+        if json_output:
+            emit_json({
+                "status": "ok" if res.exit_code == 0 else "fail",
+                "command": "audit",
+                "mode": "passive",
+                "server_info": res.server_info,
+                "protocol_version": res.protocol_version,
+                "tools_discovered": res.tools_discovered,
+                "severity_filter": res.severity_filter,
+                "findings": [
+                    {
+                        "check": f.check,
+                        "severity": f.severity,
+                        "tool": f.tool,
+                        "message": f.message,
+                        "detail": f.detail,
+                    }
+                    for f in res.findings
+                ],
+                "checks_run": res.checks_run,
+                "summary": res.summary,
+                "raw_summary": res.raw_summary,
+            })
         else:
-            for f in res.findings:
-                sev_color = "red" if f.severity == "high" else ("yellow" if f.severity == "medium" else "cyan")
-                sev_str = click.style(f"  {f.severity.upper():<6}", fg=sev_color, bold=True)
-                tool_scope = f"tool \"{_terminal_safe(f.tool)}\"" if f.tool else "server"
-                click.echo(f"{sev_str} [{_terminal_safe(f.check)}] {tool_scope}", err=True)
-                click.echo(f"        {_terminal_safe(f.message)}", err=True)
-                if f.detail:
-                    click.echo(f"        Detail: {_terminal_safe(f.detail)}", err=True)
-                click.echo(err=True)
+            s_info = res.server_info
+            s_name = s_info.get("name", "server") if isinstance(s_info, dict) else "server"
+            s_ver = s_info.get("version", "") if isinstance(s_info, dict) else ""
+            s_str = f"{s_name} v{s_ver}".strip() if s_ver else s_name
 
+            click.echo(f"Server: {s_str} (protocol: {res.protocol_version})", err=True)
+            click.echo(f"Tools: {res.tools_discovered} discovered\n", err=True)
+            click.secho(
+                "Note: Passive audit uses static pattern matching. Findings are leads for\n"
+                "human review, not proof of vulnerability. Easily evaded by obfuscation.\n",
+                fg="yellow",
+                err=True,
+            )
 
-        click.secho("━━ Summary ━━", fg="cyan", bold=True, err=True)
-        sum_str = f"{len(res.checks_run)} checks completed | {res.summary['total']} findings ({res.summary['high']} high, {res.summary['medium']} medium, {res.summary['low']} low, {res.summary['info']} info)"
-        res_color = "green" if res.exit_code == 0 else "red"
-        click.secho(f"  {sum_str}", fg=res_color, err=True)
-        status_msg = "Clean run" if res.exit_code == 0 else "Security issues detected at or above severity threshold"
-        click.secho(f"  Exit code: {res.exit_code} ({status_msg})\n", fg=res_color, bold=True, err=True)
+            click.secho("━━ Findings ━━\n", fg="cyan", bold=True, err=True)
+            if not res.findings:
+                click.secho("  ✓ No findings detected at or above severity threshold.", fg="green", err=True)
+            else:
+                for f in res.findings:
+                    sev_color = "red" if f.severity == "high" else ("yellow" if f.severity == "medium" else "cyan")
+                    sev_str = click.style(f"  {f.severity.upper():<6}", fg=sev_color, bold=True)
+                    tool_scope = f"tool \"{_terminal_safe(f.tool)}\"" if f.tool else "server"
+                    click.echo(f"{sev_str} [{_terminal_safe(f.check)}] {tool_scope}", err=True)
+                    click.echo(f"        {_terminal_safe(f.message)}", err=True)
+                    if f.detail:
+                        click.echo(f"        Detail: {_terminal_safe(f.detail)}", err=True)
+                    click.echo(err=True)
 
-    return res.exit_code
+            click.secho("━━ Summary ━━", fg="cyan", bold=True, err=True)
+            sum_str = f"{len(res.checks_run)} checks completed | {res.summary['total']} findings ({res.summary['high']} high, {res.summary['medium']} medium, {res.summary['low']} low, {res.summary['info']} info)"
+            res_color = "green" if res.exit_code == 0 else "red"
+            click.secho(f"  {sum_str}", fg=res_color, err=True)
+            status_msg = "Clean run" if res.exit_code == 0 else "Security issues detected at or above severity threshold"
+            click.secho(f"  Exit code: {res.exit_code} ({status_msg})\n", fg=res_color, bold=True, err=True)
+
+        return res.exit_code
 
 
 @main.command(context_settings=dict(
@@ -1686,29 +1810,48 @@ async def run_audit(
     allow_extra_args=True,
 ))
 @click.option('--passive', is_flag=True, default=False, help="Run passive security checks on server initialize + tools/list responses.")
+@click.option('--active', is_flag=True, default=False, help="Run active adversarial audit using live tools/call canary injections.")
+@click.option('--active-level', type=click.Choice(['low', 'medium', 'high']), default='medium', help="Canary severity tier for active audit (default: medium).")
+@click.option('--i-understand-the-risks', is_flag=True, default=False, help="Unlock high-tier command injection probes for active audit.")
+@click.option('--delay-ms', type=int, default=100, help="Delay in milliseconds between canary invocations (default: 100).")
+@click.option('--sandbox-tmpdir', type=click.Path(path_type=Path), default=None, help="Isolated CWD directory for sandboxed server.")
+@click.option('--sandbox-allow-env', type=str, multiple=True, help="Pass through specific environment variables to sandboxed server. Repeatable.")
+@click.option('--max-restarts', type=int, default=5, help="Max server restarts during active audit on crash/timeout (default: 5).")
 @click.option('--server', type=str, default=None, help="Server command string to launch (e.g. 'python server.py').")
 @click.option('--transport', type=click.Choice(['stdio', 'sse']), default='stdio', help="Transport protocol (default: stdio).")
 @click.option('--sse-url', type=str, default=None, help="SSE endpoint URL (required if --transport=sse).")
 @click.option('--sse-header', type=str, multiple=True, help="HTTP header for SSE transport as 'Key: Value'. Repeatable.")
 @click.option('--timeout', type=int, default=10000, help="Timeout in milliseconds per request (default: 10000).")
-@click.option('--severity', type=click.Choice(['high', 'medium', 'low', 'info']), default='info', help="Minimum severity threshold to report and affect exit code (default: info).")
+@click.option('--severity', type=click.Choice(['high', 'medium', 'low', 'info']), default='info', help="Minimum severity threshold to report in passive audit (default: info).")
 @click.option('--json', 'json_output', is_flag=True, help="Output structured JSON envelope to stdout.")
 @click.argument('server_args', nargs=-1, type=click.UNPROCESSED, required=False)
-def audit(passive, server, transport, sse_url, sse_header, timeout, severity, json_output, server_args):
+def audit(passive, active, active_level, i_understand_the_risks, delay_ms, sandbox_tmpdir, sandbox_allow_env, max_restarts, server, transport, sse_url, sse_header, timeout, severity, json_output, server_args):
     """Run security audit suite against an MCP server.
     
     Example:
       mcp-vcr audit --passive -- python server.py
-      mcp-vcr audit --passive --server "python server.py" --severity high
-      mcp-vcr audit --passive --json -- python server.py
+      mcp-vcr audit --active -- python server.py
+      mcp-vcr audit --active --active-level high --i-understand-the-risks -- python server.py
     """
-    if not passive:
-        err_msg = "--passive flag is required for audit. Usage: mcp-vcr audit --passive -- python server.py"
-        if json_output:
-            emit_json(error_envelope("audit", err_msg))
-        else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(2)
+    if not passive and not active:
+        err_msg = "Either --passive or --active flag is required for audit. Usage: mcp-vcr audit --passive -- python server.py"
+        _error_and_exit("audit", err_msg, json_output, exit_code=2)
+
+    if passive and active:
+        err_msg = "--passive and --active flags are mutually exclusive."
+        _error_and_exit("audit", err_msg, json_output, exit_code=2)
+
+    if i_understand_the_risks and not active:
+        err_msg = "--i-understand-the-risks can only be used with --active."
+        _error_and_exit("audit", err_msg, json_output, exit_code=2)
+
+    if active and active_level == "high" and not i_understand_the_risks:
+        err_msg = (
+            "High-tier canaries include command injection probes "
+            "(e.g., $(echo ...), `echo ...`, ; echo ...). "
+            "Pass --i-understand-the-risks to confirm."
+        )
+        _error_and_exit("audit", err_msg, json_output, exit_code=2)
 
     import shlex
     args = []
@@ -1721,22 +1864,14 @@ def audit(passive, server, transport, sse_url, sse_header, timeout, severity, js
 
     if transport == 'stdio' and not args:
         err_msg = "No server command specified. What to try: use --server \"command\" or pass arguments after '--'."
-        if json_output:
-            emit_json(error_envelope("audit", err_msg))
-        else:
-            click.secho(f"ERROR: {err_msg}", fg="red", err=True)
-        sys.exit(1)
+        _error_and_exit("audit", err_msg, json_output, exit_code=1)
 
     headers = {}
     if transport == 'sse':
         try:
             sse_url, headers = _resolve_sse_settings(None, sse_url, sse_header)
         except SseSettingsError as e:
-            if json_output:
-                emit_json(error_envelope("audit", str(e)))
-            else:
-                click.secho(f"ERROR: {e}", fg="red", err=True)
-            sys.exit(1)
+            _error_and_exit("audit", str(e), json_output, exit_code=1)
 
     exit_code = asyncio.run(run_audit(
         args=args,
@@ -1746,8 +1881,51 @@ def audit(passive, server, transport, sse_url, sse_header, timeout, severity, js
         timeout=timeout,
         severity=severity,
         json_output=json_output,
+        active=active,
+        active_level=active_level,
+        i_understand_the_risks=i_understand_the_risks,
+        delay_ms=delay_ms,
+        sandbox_tmpdir=sandbox_tmpdir,
+        sandbox_allow_env=sandbox_allow_env,
+        max_restarts=max_restarts,
     ))
     sys.exit(exit_code)
+
+
+@main.command(name="report")
+@click.option('--format', 'report_format', type=click.Choice(['html', 'json']), default='html', help="Report output format (default: html).")
+@click.option('--input', 'input_files', type=click.Path(exists=True, dir_okay=False, path_type=Path), multiple=True, required=True, help="Path to JSON result file(s) from --json CLI commands. Repeatable.")
+@click.option('--output', '-o', type=click.Path(path_type=Path), default=None, help="Output report file path (default: report.html or report.json).")
+@click.option('--title', type=str, default="mcp-vcr Test Report", help="Custom report title.")
+def report_command(report_format, input_files, output, title):
+    """Generate HTML or JSON test report files from --json output artifacts.
+    
+    Example:
+      mcp-vcr report --input verify.json audit.json fuzz.json -o report.html
+      mcp-vcr report --format json --input verify.json -o report.json
+    """
+    from .reporter import ReportEngine
+
+    if not input_files:
+        click.secho("ERROR: At least one --input file is required.", fg="red", err=True)
+        sys.exit(1)
+
+    if output is None:
+        output = Path(f"report.{report_format}")
+
+    try:
+        report_data = ReportEngine.from_json_files(list(input_files), title=title)
+        engine = ReportEngine()
+        if report_format == "html":
+            engine.generate_html(report_data, output)
+        else:
+            engine.generate_json(report_data, output)
+        click.secho(f"Report generated successfully: {output}", fg="green")
+        sys.exit(0)
+    except Exception as e:
+        click.secho(f"ERROR: Failed to generate report: {e}", fg="red", err=True)
+        sys.exit(1)
+
 
 
 async def run_fuzz(

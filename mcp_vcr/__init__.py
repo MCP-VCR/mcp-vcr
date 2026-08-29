@@ -42,6 +42,17 @@ from .auditor import (
 )
 from .mutators import Mutation, MutationSet, generate_mutations
 from .fuzzer import FuzzEngine, FuzzResult, FuzzCaseResult
+from .sandbox import SandboxConfig, SandboxedTransport
+from .active_auditor import (
+    ActiveAuditEngine,
+    ActiveAuditResult,
+    ActiveAuditCaseResult,
+    CanaryPayload,
+    generate_canary_payloads,
+    check_canary_echo,
+    redact_canaries,
+)
+from .reporter import ReportEngine, ReportData, ReportSection
 
 __all__ = [
     "Transcript",
@@ -88,7 +99,20 @@ __all__ = [
     "FuzzEngine",
     "FuzzResult",
     "FuzzCaseResult",
+    "SandboxConfig",
+    "SandboxedTransport",
+    "ActiveAuditEngine",
+    "ActiveAuditResult",
+    "ActiveAuditCaseResult",
+    "CanaryPayload",
+    "generate_canary_payloads",
+    "check_canary_echo",
+    "redact_canaries",
+    "ReportEngine",
+    "ReportData",
+    "ReportSection",
 ]
+
 
 
 

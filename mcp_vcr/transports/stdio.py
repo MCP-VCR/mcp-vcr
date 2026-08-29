@@ -5,7 +5,9 @@ import os
 import sys
 import threading
 from collections import deque
-from typing import Any, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
 from .base import Transport
 
 logger = logging.getLogger("mcp-vcr.transports.stdio")
@@ -53,24 +55,38 @@ async def get_stdin_reader(limit: int = 16 * 1024 * 1024) -> asyncio.StreamReade
         
     return reader
 
-async def launch_server(server_args: List[str], limit: int = 16 * 1024 * 1024) -> asyncio.subprocess.Process:
+async def launch_server(
+    server_args: List[str],
+    limit: int = 16 * 1024 * 1024,
+    env: Optional[Dict[str, str]] = None,
+    cwd: Optional[Union[str, Path]] = None,
+) -> asyncio.subprocess.Process:
     """
-    Launch the MCP server as a managed subprocess with piped stdin/stdout/stderr
-    and specified StreamReader buffer limit.
+    Launch the MCP server as a managed subprocess with piped stdin/stdout/stderr,
+    specified StreamReader buffer limit, environment, and working directory.
     """
     if not server_args:
         raise ValueError("Server arguments list cannot be empty")
         
-    logger.info(f"Launching subprocess: {server_args} with limit={limit}")
+    logger.info(f"Launching subprocess: {server_args} with limit={limit}, cwd={cwd}")
     
+    kwargs: Dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "limit": limit,
+    }
+    if env is not None:
+        kwargs["env"] = env
+    if cwd is not None:
+        kwargs["cwd"] = str(cwd)
+
     process = await asyncio.create_subprocess_exec(
         *server_args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        limit=limit
+        **kwargs,
     )
     return process
+
 
 async def pump_c2s(
     reader: asyncio.StreamReader,
@@ -187,11 +203,21 @@ class StdioTransport(Transport):
     StdioTransport implements the Transport protocol for local MCP servers
     running as subprocesses communicating over stdin/stdout.
     """
-    def __init__(self, server_args: List[str], limit: int = 16 * 1024 * 1024, read_stdin: bool = True, capture_stderr: bool = False):
+    def __init__(
+        self,
+        server_args: List[str],
+        limit: int = 16 * 1024 * 1024,
+        read_stdin: bool = True,
+        capture_stderr: bool = False,
+        env: Optional[Dict[str, str]] = None,
+        cwd: Optional[Union[str, Path]] = None,
+    ):
         self.server_args = server_args
         self.limit = limit
         self.read_stdin = read_stdin
         self.capture_stderr = capture_stderr
+        self.env = env
+        self.cwd = cwd
         self.process: Optional[asyncio.subprocess.Process] = None
         self.stdin_reader: Optional[asyncio.StreamReader] = None
         self.client_writer: Optional[StreamWriterWrapper] = None
@@ -206,7 +232,13 @@ class StdioTransport(Transport):
         return captured
 
     async def start(self) -> None:
-        self.process = await launch_server(self.server_args, limit=self.limit)
+        self.process = await launch_server(
+            self.server_args,
+            limit=self.limit,
+            env=self.env,
+            cwd=self.cwd,
+        )
+
         if self.read_stdin:
             self.stdin_reader = await get_stdin_reader(limit=self.limit)
         else:

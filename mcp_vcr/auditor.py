@@ -2,7 +2,8 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
 
 from .generator import DiscoveryResult, GeneratorEngine
 from .transports.base import Transport
@@ -407,3 +408,23 @@ class AuditEngine:
             raw_summary=raw_summary,
             exit_code=exit_code,
         )
+
+    async def run_active_audit(
+        self,
+        transport_factory: Callable[[], Transport],
+        severity_tier: str = "medium",
+        allow_high: bool = False,
+        delay_ms: int = 100,
+        sandbox_config: Optional[Any] = None,
+    ) -> Any:
+        """Run active adversarial audit with canary payload injection."""
+        from .active_auditor import ActiveAuditEngine
+
+        engine = ActiveAuditEngine(
+            timeout_ms=self.timeout_ms,
+            severity_tier=severity_tier,
+            allow_high=allow_high,
+            delay_ms=delay_ms,
+        )
+        return await engine.run(transport_factory, sandbox_config)
+
