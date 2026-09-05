@@ -53,3 +53,7 @@ cover/
 # mcp-vcr specific
 sessions/
 logs/
+*-replay-*.yaml
+*-replay-*.yml
+*_normalized.yaml
+*_normalized.yml

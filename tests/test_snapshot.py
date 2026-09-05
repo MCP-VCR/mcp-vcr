@@ -238,6 +238,10 @@ async def test_regression_testing_pass_fail_update(regression_server_setup, tmp_
     exit_pass_2 = await run_verify(snapshots_dir, server_args=[sys.executable, str(server_path)])
     assert exit_pass_2 == 0
 
+    # Ensure no temporary replay artifacts remain in snapshots_dir
+    leftovers = list(snapshots_dir.glob("*-replay-*.yaml")) + list(snapshots_dir.glob("*_normalized.yaml"))
+    assert leftovers == []
+
 @pytest.mark.asyncio
 async def test_run_verify_missing_source_fallback(regression_server_setup, tmp_path):
     """Verify that verify mode falls back to replaying the golden itself when original source is missing."""

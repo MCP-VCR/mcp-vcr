@@ -92,7 +92,7 @@ def test_version_option():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "mcp-vcr, version 0.2.1" in result.output
+    assert "mcp-vcr, version 0.2.2" in result.output
 
 def test_list_sessions_json(temp_sessions_dir):
     """Verify that mcp-vcr list with json format outputs a sorted JSON array of sessions."""

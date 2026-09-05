@@ -44,7 +44,7 @@ def _get_version() -> str:
 
         return version("mcp-vcr")
     except Exception:
-        return "0.2.1"
+        return "0.2.2"
 
 
 def _load_template() -> str:

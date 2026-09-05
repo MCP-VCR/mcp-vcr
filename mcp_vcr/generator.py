@@ -17,7 +17,7 @@ from .transports.base import Transport
 logger = logging.getLogger("mcp-vcr.generator")
 
 CLIENT_NAME = "mcp-vcr-generate"
-CLIENT_VERSION = "0.2.1"
+CLIENT_VERSION = "0.2.2"
 CLIENT_PROTOCOL_VERSION = "2024-11-05"
 MAX_TOOLS_LIST_PAGES = 100
 

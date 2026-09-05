@@ -77,7 +77,7 @@ def _resolve_sse_settings(config_path, sse_url, sse_header, snapshot_path=None):
     return resolved_url, headers
 
 @click.group()
-@click.version_option(version="0.2.1", prog_name="mcp-vcr")
+@click.version_option(version="0.2.2", prog_name="mcp-vcr")
 def main():
     """mcp-vcr: A deterministic MCP transcript proxy and testing tool."""
     pass

@@ -151,6 +151,8 @@ async def _run_verify_impl(
             
         click.secho(f"Verifying snapshot: {golden_path.name} (source: {source_path.name})", fg="cyan", err=True)
         
+        replay_path = None
+        normalized_replay_path = None
         try:
             # 1. Replay original transcript
             replay_path = await engine.run_replay(source_path, server_args=server_args)
@@ -265,6 +267,21 @@ async def _run_verify_impl(
                 "detail": tb
             })
             failed_count += 1
+        finally:
+            if replay_path is not None:
+                p = Path(replay_path)
+                if p.exists():
+                    try:
+                        p.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            if normalized_replay_path is not None:
+                p_norm = Path(normalized_replay_path)
+                if p_norm.exists():
+                    try:
+                        p_norm.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
     exit_code = 1 if failed_count > 0 else 0
     return {
